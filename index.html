@@ -6,78 +6,53 @@
 <title>Metamaterial Generator — Diffusion Model (in-browser)</title>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
 <style>
-  :root{--bg:#fff;--navy:#1b2a4a;--navy-dark:#142038;--navy-light:#e8ecf4;--navy-mid:#5c6b8a;--ink:#1b2a4a;--mut:#4a5568;--good:#1a6640;--warn:#8b6914;}
   *{box-sizing:border-box}
-  body{margin:0;font-family:Georgia,"Times New Roman",Times,serif;background:var(--bg);color:var(--ink);min-height:100vh;font-size:14px;line-height:1.5}
-  a{color:var(--navy)}
-  a:visited{color:var(--navy-mid)}
-  header{text-align:center;padding:0 0 20px;border-bottom:4px solid var(--navy)}
-  .site-title{font-family:Georgia,"Times New Roman",serif;font-size:28px;font-weight:normal;letter-spacing:.08em;color:var(--navy);padding:24px 16px 0;margin:0}
-  .site-nav{background:var(--navy-dark);color:#fff;padding:10px 16px;font-size:13px;margin-top:16px}
-  .site-nav a{color:#fff;text-decoration:none}
-  .site-nav a:hover{text-decoration:underline}
-  h1{font-size:22px;font-weight:normal;font-style:italic;color:var(--navy);margin:20px 16px 8px}
-  .sub{color:var(--mut);font-size:13px;margin:0 auto;max-width:820px;padding:0 22px}
-  .wrap{display:grid;grid-template-columns:320px 1fr;gap:20px;padding:20px 22px;max-width:1180px;margin:0 auto}
-  @media(max-width:820px){.wrap{grid-template-columns:1fr}}
-  .card{background:var(--navy-light);border:4px solid var(--navy);padding:16px}
-  .card h2{font-size:14px;font-weight:bold;font-variant:small-caps;letter-spacing:.1em;color:var(--navy);margin:0 0 12px;text-align:center;border-bottom:2px solid var(--navy);padding-bottom:8px}
-  label{font-size:13px;display:block;margin:14px 0 6px}
-  .val{color:var(--navy);font-weight:bold}
-  input[type=range]{width:100%;accent-color:var(--navy)}
-  .seg{display:flex;gap:4px;flex-wrap:wrap}
-  .seg button{flex:1;min-width:56px;background:#fff;border:2px solid var(--navy);color:var(--navy);padding:6px 4px;font-family:inherit;font-size:12px;cursor:pointer}
-  .seg button.on{background:var(--navy);border-color:var(--navy);color:#fff;font-weight:bold}
-  .go{width:100%;margin-top:18px;padding:10px;border:3px solid var(--navy);background:var(--navy);color:#fff;font-family:inherit;font-weight:bold;font-size:14px;cursor:pointer}
-  .go:disabled{opacity:.55;cursor:default}
-  .note{font-size:12px;color:var(--mut);margin-top:12px;line-height:1.5}
-  .results{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
-  @media(max-width:520px){.results{grid-template-columns:1fr}}
-  .cell{background:#fff;border:4px solid var(--navy);padding:12px;text-align:center}
-  .cell.best{border-color:var(--good)}
-  canvas{image-rendering:pixelated;background:#f5f5f0;border:3px solid var(--navy);width:100%;height:auto;max-width:200px}
-  .tag.best{display:inline-block;font-size:11px;padding:2px 10px;margin-bottom:6px;background:var(--good);color:#fff;font-weight:bold;font-variant:small-caps}
-  .metrics{font-size:12px;color:var(--mut);margin-top:8px;line-height:1.7;text-align:left}
-  .metrics b{color:var(--ink)}
-  .bar{height:8px;border:1px solid var(--navy);background:#fff;margin-top:3px;overflow:hidden}
-  .bar i{display:block;height:100%;background:var(--navy)}
-  .status{font-size:13px;color:var(--mut);margin:6px 0 14px;min-height:18px;font-style:italic}
-  details{margin-top:14px}
-  summary{cursor:pointer;color:var(--navy);font-size:12px;font-weight:bold}
-  details p{font-size:12px;color:var(--mut);line-height:1.6}
+  body{margin:0;background:#fff;color:#000}
+  a{color:#000}
+  header{padding:1em;border-bottom:1px solid #000}
+  .wrap{display:grid;grid-template-columns:14em 1fr;gap:2em;padding:1em;max-width:56em}
+  @media(max-width:36em){.wrap{grid-template-columns:1fr}}
+  label{display:block;margin:1em 0 .25em}
+  input[type=range]{width:100%;accent-color:#000}
+  .seg{display:flex;flex-wrap:wrap;gap:.25em}
+  .seg button,.go{background:#fff;color:#000;border:1px solid #000;padding:.25em .5em;cursor:pointer}
+  .seg button.on{background:#000;color:#fff}
+  .go{display:block;width:100%;margin-top:1em}
+  .go:disabled{border-style:dashed;cursor:default}
+  .results{display:grid;grid-template-columns:1fr 1fr;gap:1em}
+  @media(max-width:28em){.results{grid-template-columns:1fr}}
+  .cell{border:1px solid #000;padding:1em}
+  .cell.best{border-width:2px}
+  canvas{image-rendering:pixelated;border:1px solid #000;max-width:10em;width:100%;height:auto;display:block}
 </style>
 </head>
 <body>
 <header>
-  <div class="site-title">Metamaterial Generator</div>
-  <nav class="site-nav">Diffusion Model &middot; In-Browser Physics &middot; Unit-Cell Design &middot; <a href="procedural/">Procedural Generator</a></nav>
-  <h1>Diffusion Model</h1>
-  <div class="sub">This runs the trained conditional diffusion model (DDPM) directly in your browser via ONNX Runtime Web. You set a target volume fraction and stiffness class; the model denoises new unit cells, and each one is scored live with real physics: exact volume fraction, periodic connectivity, and a numerical homogenization for effective stiffness and Poisson's ratio.</div>
+  <p>Diffusion · <a href="procedural/">Procedural</a></p>
+  <h1>Diffusion model</h1>
 </header>
 <div class="wrap">
-  <div class="card">
-    <h2>Targets</h2>
+  <div>
     <label>Target volume fraction: <span class="val" id="vfL">0.45</span></label>
     <input type="range" id="vf" min="0.37" max="0.57" step="0.01" value="0.45">
     <label>Stiffness class</label>
     <div class="seg" id="stiff">
-      <button data-i="0">Low</button><button data-i="1">Medium</button><button data-i="2" class="on">High</button>
+      <button type="button" data-i="0">Low</button><button type="button" data-i="1">Medium</button><button type="button" data-i="2" class="on">High</button>
     </div>
     <label>Symmetry</label>
-    <div class="seg"><button id="symT">Enforce biaxial</button></div>
+    <div class="seg"><button type="button" id="symT">Enforce biaxial</button></div>
     <label>Guidance: <span class="val" id="guidL">3.0</span></label>
     <input type="range" id="guid" min="1" max="5" step="0.5" value="3" oninput="document.getElementById('guidL').textContent=(+this.value).toFixed(1)">
     <label>Denoising steps: <span class="val" id="stepsL">40</span></label>
     <input type="range" id="steps" min="20" max="60" step="10" value="40" oninput="document.getElementById('stepsL').textContent=this.value">
-    <button class="go" id="go">Generate</button>
-    <div class="note">First click loads the 8&nbsp;MB model. Stiffness and Poisson are relative to the solid material and homogenized at 24&times;24 for speed (close approximations, not exact).</div>
-    <details><summary>How it works &amp; limits</summary>
+    <button type="button" class="go" id="go">Generate</button>
+    <details><summary>How it works</summary>
       <p>The ONNX graph is the denoiser; the DDIM loop, classifier-free guidance, and the evaluator all run in JavaScript. The numpy-equivalent pipeline matches the PyTorch sampler at 0.9989 IoU.</p>
       <p>Volume-fraction control is calibrated and reliable in roughly 0.37–0.57 (the model's response is monotonic but compressed). Stiffness conditioning separates low vs high by about 2×. There is no auxetic control: the training set has essentially no negative-Poisson cells, so ν is reported but not targetable.</p>
     </details>
   </div>
   <div>
-    <div class="status" id="status">Press Generate to load the model and sample.</div>
+    <div id="status">Press Generate.</div>
     <div class="results" id="results"></div>
   </div>
 </div>
@@ -277,7 +252,6 @@ function homogenize(solid,m,voidScale=1e-3,maxit=400,tol=1e-5){
   return {Ex,Ey,nu,G};
 }
 function dot(a,b){let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;}
-function dot(a,b){let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;}
 // ===================== diffusion schedule =====================
 const T_STEPS=400, IMGD=32, M=24;
 const betas=Array.from({length:T_STEPS},(_,i)=>1e-4+(0.02-1e-4)*i/(T_STEPS-1));
@@ -372,11 +346,15 @@ function evaluateCell(a){
 
 // ===================== UI =====================
 const $=s=>document.querySelector(s);
-let STIFF=2, // 0 low,1 med,2 high
-    SYM=false;
-$("#vf").oninput=e=>{$("#vfL").textContent=(+e.target.value).toFixed(2);};
-$("#stiff").onclick=e=>{if(e.target.dataset.i!==undefined){[...$("#stiff").children].forEach(b=>b.classList.remove("on"));e.target.classList.add("on");STIFF=+e.target.dataset.i;}};
-$("#symT").onclick=()=>{SYM=!SYM;$("#symT").classList.toggle("on",SYM);};
+let STIFF=2, SYM=false;
+$("#vf").addEventListener("input",e=>{$("#vfL").textContent=(+e.target.value).toFixed(2);});
+$("#stiff").addEventListener("click",e=>{
+  if(e.target.dataset.i===undefined)return;
+  [...$("#stiff").children].forEach(b=>b.classList.remove("on"));
+  e.target.classList.add("on");
+  STIFF=+e.target.dataset.i;
+});
+$("#symT").addEventListener("click",()=>{SYM=!SYM;$("#symT").classList.toggle("on",SYM);});
 
 function drawCell(canvas,a,n){
   const tile=2;
@@ -385,12 +363,12 @@ function drawCell(canvas,a,n){
   for(let ty=0;ty<tile;ty++)for(let tx=0;tx<tile;tx++)
     for(let y=0;y<n;y++)for(let x=0;x<n;x++){
       const s=a[y*n+x], X=tx*n+x, Y=ty*n+y, idx=(Y*n*tile+X)*4;
-      img.data[idx]=s?27:250;img.data[idx+1]=s?42:248;img.data[idx+2]=s?74:245;img.data[idx+3]=255;
+      img.data[idx]=s?0:255;img.data[idx+1]=s?0:255;img.data[idx+2]=s?0:255;img.data[idx+3]=255;
     }
   ctx.putImageData(img,0,0);
 }
 
-$("#go").onclick=async()=>{
+$("#go").addEventListener("click",async()=>{
   if(!SESSION){
     $("#status").textContent="Loading model…";
     try{ const be=await loadModel(); $("#status").textContent="Model loaded ("+be+" backend)."; }
@@ -424,22 +402,21 @@ $("#go").onclick=async()=>{
     const sc=m=>(m.connected?1:0)*1 - Math.abs(m.vf-targetVF) + (STIFF===2?m.E:STIFF===0?-m.E:0)*0.5;
     return sc(q.m)-sc(p.m);
   });
-  $("#status").textContent=`Done. ${scored.filter(s=>s.m.connected).length}/${n} connected. Best match outlined in green. Backend: ${BACKEND}.`;
+  $("#status").textContent=`Done. ${scored.filter(s=>s.m.connected).length}/${n} connected.`;
   const R=$("#results"); R.innerHTML="";
   scored.forEach((p,i)=>{
     const d=document.createElement("div"); d.className="cell"+(i===0?" best":"");
     const cv=document.createElement("canvas"); drawCell(cv,p.a,IMGD);
-    const m=p.m, eW=Math.min(100,m.E*100/0.5);
-    d.innerHTML=i===0?`<span class="tag best">BEST</span>`:"";
+    const m=p.m;
+    d.innerHTML=i===0?"best<br>":"";
     d.appendChild(cv);
-    const info=document.createElement("div");info.className="metrics";
+    const info=document.createElement("div");
     info.innerHTML=
-      `<div>vol. fraction <b>${m.vf.toFixed(3)}</b> (target ${targetVF.toFixed(2)})</div>`+
-      `<div>connected <b style="color:${m.connected?'#1a6640':'#8b6914'}">${m.connected?'yes':'no'}</b>, pieces <b>${m.comps}</b></div>`+
-      `<div>stiffness E <b>${m.E.toFixed(3)}</b><div class="bar"><i style="width:${eW}%"></i></div></div>`+
-      `<div>Poisson ν <b style="color:${m.nu<0?'#1a6640':'#1b2a4a'}">${m.nu.toFixed(3)}</b>${m.nu<0?' (auxetic!)':''}</div>`;
+      `vf ${m.vf.toFixed(3)} / ${targetVF.toFixed(2)}<br>`+
+      `connected ${m.connected?"yes":"no"}, ${m.comps} pieces<br>`+
+      `E ${m.E.toFixed(3)}, nu ${m.nu.toFixed(3)}${m.nu<0?" auxetic":""}`;
     d.appendChild(info); R.appendChild(d);
   });
   $("#go").disabled=false;
-};
+});
 </script></body></html>
