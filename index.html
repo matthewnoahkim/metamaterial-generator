@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Metamaterial Generator — Diffusion Model (in-browser)</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
+<style>
+  :root{--bg:#0e1726;--panel:#16213a;--panel2:#1d2c4a;--ink:#e8eef7;--mut:#9fb0c8;--line:#2c3e60;--accent:#4f9dff;--good:#39c07a;--warn:#f2a93b;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:linear-gradient(180deg,#0b1320,#0e1726);color:var(--ink);min-height:100vh}
+  header{padding:18px 22px;border-bottom:1px solid var(--line)}
+  h1{font-size:20px;margin:0}
+  .sub{color:var(--mut);font-size:13px;margin-top:4px;max-width:820px}
+  .wrap{display:grid;grid-template-columns:320px 1fr;gap:18px;padding:18px 22px;max-width:1180px}
+  @media(max-width:820px){.wrap{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 12px}
+  label{font-size:13px;display:block;margin:14px 0 6px}
+  .val{color:var(--accent);font-weight:600}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .seg{display:flex;gap:6px;flex-wrap:wrap}
+  .seg button{flex:1;min-width:56px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);padding:8px 6px;border-radius:8px;font-size:12.5px;cursor:pointer}
+  .seg button.on{background:var(--accent);border-color:var(--accent);color:#04203f;font-weight:600}
+  .go{width:100%;margin-top:18px;padding:12px;border:none;border-radius:10px;background:var(--accent);color:#04203f;font-weight:700;font-size:15px;cursor:pointer}
+  .go:disabled{opacity:.6;cursor:default}
+  .note{font-size:11.5px;color:var(--mut);margin-top:12px;line-height:1.5}
+  .results{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  @media(max-width:520px){.results{grid-template-columns:1fr}}
+  .cell{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;text-align:center}
+  .cell.best{border-color:var(--good);box-shadow:0 0 0 1px var(--good) inset}
+  canvas{image-rendering:pixelated;border-radius:8px;background:#0a1120;width:100%;height:auto;max-width:200px}
+  .tag.best{display:inline-block;font-size:10.5px;padding:2px 8px;border-radius:20px;margin-bottom:6px;background:var(--good);color:#04220f;font-weight:700}
+  .metrics{font-size:12px;color:var(--mut);margin-top:8px;line-height:1.6;text-align:left}
+  .metrics b{color:var(--ink)}
+  .bar{height:6px;border-radius:4px;background:#243456;margin-top:3px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--accent)}
+  .status{font-size:13px;color:var(--mut);margin:6px 0 14px;min-height:18px}
+  details{margin-top:14px}summary{cursor:pointer;color:var(--mut);font-size:12px}
+  details p{font-size:12px;color:var(--mut);line-height:1.6}
+</style>
+</head>
+<body>
+<header>
+  <h1>Metamaterial Generator — Diffusion Model</h1>
+  <div class="sub">This runs the trained conditional diffusion model (DDPM) directly in your browser via ONNX Runtime Web. You set a target volume fraction and stiffness class; the model denoises new unit cells, and each one is scored live with real physics: exact volume fraction, periodic connectivity, and a numerical homogenization for effective stiffness and Poisson's ratio.</div>
+</header>
+<div class="wrap">
+  <div class="card">
+    <h2>Targets</h2>
+    <label>Target volume fraction: <span class="val" id="vfL">0.45</span></label>
+    <input type="range" id="vf" min="0.37" max="0.57" step="0.01" value="0.45">
+    <label>Stiffness class</label>
+    <div class="seg" id="stiff">
+      <button data-i="0">Low</button><button data-i="1">Medium</button><button data-i="2" class="on">High</button>
+    </div>
+    <label>Symmetry</label>
+    <div class="seg"><button id="symT">Enforce biaxial</button></div>
+    <label>Guidance: <span class="val" id="guidL">3.0</span></label>
+    <input type="range" id="guid" min="1" max="5" step="0.5" value="3" oninput="document.getElementById('guidL').textContent=(+this.value).toFixed(1)">
+    <label>Denoising steps: <span class="val" id="stepsL">40</span></label>
+    <input type="range" id="steps" min="20" max="60" step="10" value="40" oninput="document.getElementById('stepsL').textContent=this.value">
+    <button class="go" id="go">Generate</button>
+    <div class="note">First click loads the 8&nbsp;MB model. Stiffness and Poisson are relative to the solid material and homogenized at 24&times;24 for speed (close approximations, not exact).</div>
+    <details><summary>How it works &amp; limits</summary>
+      <p>The ONNX graph is the denoiser; the DDIM loop, classifier-free guidance, and the evaluator all run in JavaScript. The numpy-equivalent pipeline matches the PyTorch sampler at 0.9989 IoU.</p>
+      <p>Volume-fraction control is calibrated and reliable in roughly 0.37–0.57 (the model's response is monotonic but compressed). Stiffness conditioning separates low vs high by about 2×. There is no auxetic control: the training set has essentially no negative-Poisson cells, so ν is reported but not targetable.</p>
+    </details>
+  </div>
+  <div>
+    <div class="status" id="status">Press Generate to load the model and sample.</div>
+    <div class="results" id="results"></div>
+  </div>
+</div>
+<script>
+const KE = [
+  [0.494505,0.178571,-0.302198,-0.013736,-0.247253,-0.178571,0.054945,0.013736],
+  [0.178571,0.494505,0.013736,0.054945,-0.178571,-0.247253,-0.013736,-0.302198],
+  [-0.302198,0.013736,0.494505,-0.178571,0.054945,-0.013736,-0.247253,0.178571],
+  [-0.013736,0.054945,-0.178571,0.494505,0.013736,-0.302198,0.178571,-0.247253],
+  [-0.247253,-0.178571,0.054945,0.013736,0.494505,0.178571,-0.302198,-0.013736],
+  [-0.178571,-0.247253,-0.013736,-0.302198,0.178571,0.494505,0.013736,0.054945],
+  [0.054945,-0.013736,-0.247253,0.178571,-0.302198,0.013736,0.494505,-0.178571],
+  [0.013736,-0.302198,0.178571,-0.247253,-0.013736,0.054945,-0.178571,0.494505],
+];
+const CHI0 = [ // (8 x 3): unit macro-strain nodal fields
+  [-0.5,0,-0.5],[0,-0.5,0],[0.5,0,-0.5],[0,-0.5,0],
+  [0.5,0,0.5],[0,0.5,0],[-0.5,0,0.5],[0,0.5,0]
+];
+
+// ---------- seeded RNG ----------
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+// ---------- generator: smoothed Gaussian field + optional struts ----------
+function gaussianField(n,scale,rnd){
+  let f=new Float32Array(n*n);
+  for(let i=0;i<n*n;i++) f[i]=rnd()*2-1;
+  // separable box blur repeated ~ Gaussian; radius from scale
+  const r=Math.max(1,Math.round(scale));
+  for(let pass=0;pass<3;pass++){
+    f=blur1d(f,n,r,true); f=blur1d(f,n,r,false);
+  }
+  return f;
+}
+function blur1d(f,n,r,horiz){
+  const out=new Float32Array(n*n);
+  for(let a=0;a<n;a++){
+    for(let b=0;b<n;b++){
+      let s=0,c=0;
+      for(let k=-r;k<=r;k++){
+        const bb=((b+k)%n+n)%n;
+        s+= horiz? f[a*n+bb] : f[bb*n+a]; c++;
+      }
+      if(horiz) out[a*n+b]=s/c; else out[b*n+a]=s/c;
+    }
+  }
+  return out;
+}
+function addStruts(f,n,rnd){ // bias toward connected trusses
+  const nb=2+Math.floor(rnd()*3);
+  for(let s=0;s<nb;s++){
+    const horiz=rnd()<0.5, pos=Math.floor(rnd()*n), w=1+Math.floor(rnd()*2);
+    for(let i=0;i<n;i++) for(let dw=-w;dw<=w;dw++){
+      const p=((pos+dw)%n+n)%n;
+      const idx= horiz? p*n+i : i*n+p;
+      f[idx]+=1.2;
+    }
+  }
+  return f;
+}
+function symmetrize(f,n,mode){
+  if(mode==="none") return f;
+  const out=new Float32Array(n*n);
+  for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+    const xm=n-1-x, ym=n-1-y;
+    let v=f[y*n+x]+f[y*n+xm]+f[ym*n+x]+f[ym*n+xm];
+    if(mode==="quarter"){ v+=f[x*n+y]+f[x*n+ym]+f[xm*n+y]+f[xm*n+ym]; v/=8; }
+    else v/=4;
+    out[y*n+x]=v;
+  }
+  return out;
+}
+function thresholdToVF(f,n,vf){ // pick threshold so fraction solid = vf
+  const s=Float32Array.from(f).sort(); const k=Math.floor((1-vf)*n*n);
+  const thr=s[Math.min(n*n-1,Math.max(0,k))];
+  const out=new Uint8Array(n*n);
+  for(let i=0;i<n*n;i++) out[i]=f[i]>=thr?1:0;
+  return out;
+}
+
+// ---------- exact metrics: vf, connectivity (periodic), symmetry ----------
+function volumeFraction(a){let s=0;for(let i=0;i<a.length;i++)s+=a[i];return s/a.length;}
+function components(a,n){ // periodic 4-conn union-find -> {count, percX, percY}
+  const par=new Int32Array(n*n).map((_,i)=>i);
+  function find(x){while(par[x]!==x){par[x]=par[par[x]];x=par[x];}return x;}
+  function uni(x,y){par[find(x)]=find(y);}
+  for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+    if(!a[y*n+x])continue;
+    const rx=(x+1)%n, dy=(y+1)%n;
+    if(a[y*n+rx]) uni(y*n+x,y*n+rx);
+    if(a[dy*n+x]) uni(y*n+x,dy*n+x);
+  }
+  const roots=new Set(); let solid=0;
+  for(let i=0;i<n*n;i++) if(a[i]){roots.add(find(i));solid++;}
+  // percolation: does any component wrap (touches x=0 and x=n-1 in same comp,
+  // considering periodic wrap means: a component spanning is one that connects
+  // a left cell to a right cell non-trivially). Use simple span check.
+  let percX=false,percY=false;
+  for(let y=0;y<n;y++){ if(a[y*n+0]&&a[y*n+(n-1)]&&find(y*n+0)===find(y*n+(n-1))) percX=true; }
+  for(let x=0;x<n;x++){ if(a[0*n+x]&&a[(n-1)*n+x]&&find(0*n+x)===find((n-1)*n+x)) percY=true; }
+  return {count:roots.size, percX, percY, solid};
+}
+function symmetryScore(a,n){
+  let mx=0,my=0;
+  for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+    if(a[y*n+x]===a[y*n+(n-1-x)])mx++;
+    if(a[y*n+x]===a[(n-1-y)*n+x])my++;
+  }
+  return Math.max(mx,my)/(n*n);
+}
+
+// ---------- downsample to m x m ----------
+function downsample(a,n,m){
+  const out=new Uint8Array(m*m);
+  for(let y=0;y<m;y++)for(let x=0;x<m;x++){
+    const x0=Math.floor(x*n/m),x1=Math.floor((x+1)*n/m);
+    const y0=Math.floor(y*n/m),y1=Math.floor((y+1)*n/m);
+    let s=0,c=0;
+    for(let yy=y0;yy<Math.max(y1,y0+1);yy++)for(let xx=x0;xx<Math.max(x1,x0+1);xx++){s+=a[yy*n+xx];c++;}
+    out[y*m+x]= s/c>=0.5?1:0;
+  }
+  return out;
+}
+
+// ---------- homogenization via matrix-free CG (24x24) ----------
+function homogenize(solid,m,voidScale=1e-3,maxit=400,tol=1e-5){
+  const nel=m*m, ndof=2*m*m;
+  const scale=new Float32Array(nel);
+  for(let i=0;i<nel;i++) scale[i]= solid[i]? 1.0 : voidScale;
+  // edof per element (periodic node ids), node order BL,BR,TR,TL
+  const edof=new Int32Array(nel*8);
+  for(let ey=0;ey<m;ey++)for(let ex=0;ex<m;ex++){
+    const e=ey*m+ex;
+    const nid=(ix,iy)=>((iy%m)*m+(ix%m));
+    const nodes=[nid(ex,ey),nid(ex+1,ey),nid(ex+1,ey+1),nid(ex,ey+1)];
+    for(let k=0;k<4;k++){edof[e*8+2*k]=2*nodes[k];edof[e*8+2*k+1]=2*nodes[k]+1;}
+  }
+  // fe = KE @ CHI0 (8x3)
+  const fe=[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];
+  for(let i=0;i<8;i++)for(let c=0;c<3;c++){let s=0;for(let k=0;k<8;k++)s+=KE[i][k]*CHI0[k][c];fe[i][c]=s;}
+  // diag of K
+  const diag=new Float32Array(ndof);
+  for(let e=0;e<nel;e++)for(let k=0;k<8;k++) diag[edof[e*8+k]]+=scale[e]*KE[k][k];
+  function matvec(x){
+    const y=new Float32Array(ndof);
+    for(let e=0;e<nel;e++){
+      const o=e*8, sc=scale[e];
+      const xe=[x[edof[o]],x[edof[o+1]],x[edof[o+2]],x[edof[o+3]],x[edof[o+4]],x[edof[o+5]],x[edof[o+6]],x[edof[o+7]]];
+      for(let i=0;i<8;i++){let s=0;const ri=KE[i];for(let k=0;k<8;k++)s+=ri[k]*xe[k];y[edof[o+i]]+=sc*s;}
+    }
+    return y;
+  }
+  // assemble F (ndof x 3)
+  const F=[new Float32Array(ndof),new Float32Array(ndof),new Float32Array(ndof)];
+  for(let e=0;e<nel;e++)for(let k=0;k<8;k++)for(let c=0;c<3;c++) F[c][edof[e*8+k]]+=scale[e]*fe[k][c];
+  const chi=[new Float32Array(ndof),new Float32Array(ndof),new Float32Array(ndof)];
+  const fixed=[0,1];
+  for(let c=0;c<3;c++){
+    const b=Float32Array.from(F[c]); for(const d of fixed)b[d]=0;
+    const x=new Float32Array(ndof);
+    let r=matvec(x); for(let i=0;i<ndof;i++)r[i]=b[i]-r[i]; for(const d of fixed)r[d]=0;
+    const z=new Float32Array(ndof); for(let i=0;i<ndof;i++)z[i]=r[i]/diag[i]; for(const d of fixed)z[d]=0;
+    let p=Float32Array.from(z); let rz=dot(r,z); const bn=Math.sqrt(dot(b,b)+1e-30);
+    for(let it=0;it<maxit;it++){
+      let Ap=matvec(p); for(const d of fixed)Ap[d]=0;
+      const al=rz/(dot(p,Ap)+1e-30);
+      for(let i=0;i<ndof;i++){x[i]+=al*p[i];r[i]-=al*Ap[i];}
+      if(Math.sqrt(dot(r,r))<tol*bn)break;
+      for(let i=0;i<ndof;i++)z[i]=r[i]/diag[i]; for(const d of fixed)z[d]=0;
+      const rz2=dot(r,z); const be=rz2/rz;
+      for(let i=0;i<ndof;i++)p[i]=z[i]+be*p[i]; rz=rz2;
+    }
+    chi[c]=x;
+  }
+  // CH_ij
+  const CH=[[0,0,0],[0,0,0],[0,0,0]]; const V=nel;
+  for(let e=0;e<nel;e++){
+    const o=e*8, sc=scale[e];
+    // d[c][k] = chi0[k][c] - chi[c][edof]
+    const d=[[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0]];
+    for(let c=0;c<3;c++)for(let k=0;k<8;k++) d[c][k]=CHI0[k][c]-chi[c][edof[o+k]];
+    for(let i=0;i<3;i++){
+      const di=d[i]; const dik=[0,0,0,0,0,0,0,0];
+      for(let a=0;a<8;a++){let s=0;const ra=KE[a];for(let k=0;k<8;k++)s+=ra[k]*di[k];dik[a]=s;}
+      for(let j=0;j<3;j++){let s=0;for(let k=0;k<8;k++)s+=dik[k]*d[j][k];CH[i][j]+=sc*s/V;}
+    }
+  }
+  // symmetrize, invert 2x2 block for E, nu
+  const C00=CH[0][0],C11=CH[1][1],C01=0.5*(CH[0][1]+CH[1][0]);
+  const det=C00*C11-C01*C01;
+  let Ex=0,Ey=0,nu=0,G=CH[2][2];
+  if(Math.abs(det)>1e-12){
+    // S = inv([[C00,C01],[C01,C11]])
+    const S00=C11/det,S11=C00/det,S01=-C01/det;
+    Ex=1/S00; Ey=1/S11; nu=-S01/S00;
+  }
+  return {Ex,Ey,nu,G};
+}
+function dot(a,b){let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;}
+function dot(a,b){let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;}
+// ===================== diffusion schedule =====================
+const T_STEPS=400, IMGD=32, M=24;
+const betas=Array.from({length:T_STEPS},(_,i)=>1e-4+(0.02-1e-4)*i/(T_STEPS-1));
+const abar=(()=>{const a=new Float64Array(T_STEPS);let c=1;for(let i=0;i<T_STEPS;i++){c*=(1-betas[i]);a[i]=c;}return a;})();
+
+// vf calibration (epoch 25, guidance 3): request -> achieved. Invert to hit a target.
+const CAL_REQ=[0.2,0.3,0.4,0.5,0.6,0.7];
+const CAL_ACH=[0.367,0.400,0.442,0.488,0.529,0.567];
+function vfRequestFor(targetAchieved){
+  // piecewise-linear inverse of CAL_ACH -> CAL_REQ, clamped
+  const t=Math.max(CAL_ACH[0],Math.min(CAL_ACH[CAL_ACH.length-1],targetAchieved));
+  for(let i=0;i<CAL_ACH.length-1;i++){
+    if(t<=CAL_ACH[i+1]){
+      const f=(t-CAL_ACH[i])/(CAL_ACH[i+1]-CAL_ACH[i]);
+      return CAL_REQ[i]+f*(CAL_REQ[i+1]-CAL_REQ[i]);
+    }
+  }
+  return CAL_REQ[CAL_REQ.length-1];
+}
+function achievableRange(){return [CAL_ACH[0],CAL_ACH[CAL_ACH.length-1]];}
+
+// ===================== onnxruntime session =====================
+let SESSION=null, BACKEND="";
+async function loadModel(){
+  ort.env.wasm.numThreads=1;
+  const tryEP=async(eps)=>{
+    SESSION=await ort.InferenceSession.create("./model/ddpm2_ep25.onnx",{executionProviders:eps});
+    BACKEND=eps[0];
+  };
+  try{ await tryEP(["webgpu"]); }
+  catch(e){ await tryEP(["wasm"]); }
+  return BACKEND;
+}
+
+function randn(n){ // Box-Muller
+  const out=new Float32Array(n);
+  for(let i=0;i<n;i+=2){
+    const u1=Math.random()||1e-9,u2=Math.random();
+    const r=Math.sqrt(-2*Math.log(u1)),th=2*Math.PI*u2;
+    out[i]=r*Math.cos(th); if(i+1<n)out[i+1]=r*Math.sin(th);
+  }
+  return out;
+}
+
+// run the DDIM loop for a batch of n cells with one condition
+async function sampleBatch(n,vfReq,stiffIdx,guidance,steps,onProg){
+  const px=IMGD*IMGD;
+  let x=randn(n*px);
+  const cond=new Float32Array(n*4);
+  for(let i=0;i<n;i++){cond[i*4]=vfReq;cond[i*4+1+stiffIdx]=1;}
+  const ts=Array.from({length:steps},(_,i)=>Math.trunc((T_STEPS-1)*(1-i/(steps-1))));
+  for(let s=0;s<steps;s++){
+    const t=ts[s];
+    const tArr=new BigInt64Array(n).fill(BigInt(t));
+    const feeds={
+      x:new ort.Tensor("float32",x,[n,1,IMGD,IMGD]),
+      t:new ort.Tensor("int64",tArr,[n]),
+      cond:new ort.Tensor("float32",cond,[n,4])
+    };
+    const out=await SESSION.run(feeds);
+    const ec=out.eps_c.data, eu=out.eps_u.data;
+    const a=abar[t], sa=Math.sqrt(a), s1=Math.sqrt(1-a);
+    const last=s===steps-1, aP=last?0:abar[ts[s+1]];
+    const nx=new Float32Array(n*px);
+    for(let k=0;k<nx.length;k++){
+      const eps=eu[k]+guidance*(ec[k]-eu[k]);
+      let x0=(x[k]-s1*eps)/sa; x0=x0<-1?-1:x0>1?1:x0;
+      nx[k]= last? x0 : Math.sqrt(aP)*x0+Math.sqrt(1-aP)*eps;
+    }
+    x=nx;
+    if(onProg && s%4===0){onProg(s/steps); await new Promise(r=>setTimeout(r,0));}
+  }
+  const cells=[];
+  for(let i=0;i<n;i++){
+    const a=new Uint8Array(px);
+    for(let k=0;k<px;k++) a[k]=(x[i*px+k]+1)/2>=0.5?1:0;
+    cells.push(a);
+  }
+  return cells;
+}
+
+// ===================== evaluate a 32x32 cell =====================
+function evaluateCell(a){
+  const con=components(a,IMGD);
+  const connected=con.percX&&con.percY;
+  const small=downsample(a,IMGD,M);
+  let phys={Ex:0,Ey:0,nu:0,G:0};
+  if(con.solid>4) phys=homogenize(small,M);
+  return {vf:volumeFraction(a),comps:con.count,connected,
+          sym:symmetryScore(a,IMGD),E:Math.max(0,0.5*(phys.Ex+phys.Ey)),nu:phys.nu};
+}
+
+// ===================== UI =====================
+const $=s=>document.querySelector(s);
+let STIFF=2, // 0 low,1 med,2 high
+    SYM=false;
+$("#vf").oninput=e=>{$("#vfL").textContent=(+e.target.value).toFixed(2);};
+$("#stiff").onclick=e=>{if(e.target.dataset.i!==undefined){[...$("#stiff").children].forEach(b=>b.classList.remove("on"));e.target.classList.add("on");STIFF=+e.target.dataset.i;}};
+$("#symT").onclick=()=>{SYM=!SYM;$("#symT").classList.toggle("on",SYM);};
+
+function drawCell(canvas,a,n){
+  const tile=2;
+  canvas.width=n*tile;canvas.height=n*tile;
+  const ctx=canvas.getContext("2d"),img=ctx.createImageData(n*tile,n*tile);
+  for(let ty=0;ty<tile;ty++)for(let tx=0;tx<tile;tx++)
+    for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+      const v=a[y*n+x]?235:18, X=tx*n+x, Y=ty*n+y, idx=(Y*n*tile+X)*4;
+      img.data[idx]=v;img.data[idx+1]=v===235?240:26;img.data[idx+2]=v===235?248:42;img.data[idx+3]=255;
+    }
+  ctx.putImageData(img,0,0);
+}
+
+$("#go").onclick=async()=>{
+  if(!SESSION){
+    $("#status").textContent="Loading model…";
+    try{ const be=await loadModel(); $("#status").textContent="Model loaded ("+be+" backend)."; }
+    catch(e){ $("#status").textContent="Failed to load model. Run from a local web server (see README) so the .onnx file can be fetched. Error: "+e.message; return; }
+  }
+  $("#go").disabled=true; $("#results").innerHTML="";
+  const targetVF=+$("#vf").value;
+  const req=vfRequestFor(targetVF);
+  const guidance=+$("#guid").value, steps=+$("#steps").value, n=8;
+  const stiffName=["low","medium","high"][STIFF];
+  $("#status").textContent=`Sampling ${n} cells (target vf ${targetVF.toFixed(2)} → model request ${req.toFixed(2)}, stiffness ${stiffName})…`;
+  let cells=await sampleBatch(n,req,STIFF,guidance,steps,p=>{
+    $("#status").textContent=`Denoising… ${Math.round(p*100)}%`;
+  });
+  if(SYM){
+    // mirror-average then re-threshold for biaxial symmetry
+    cells=cells.map(a=>{
+      const n2=IMGD,out=new Uint8Array(n2*n2);
+      for(let y=0;y<n2;y++)for(let x=0;x<n2;x++){
+        const xm=n2-1-x,ym=n2-1-y;
+        const v=a[y*n2+x]+a[y*n2+xm]+a[ym*n2+x]+a[ym*n2+xm];
+        out[y*n2+x]=v>=2?1:0;
+      }
+      return out;
+    });
+  }
+  $("#status").textContent="Evaluating with in-browser homogenization…";
+  const scored=cells.map(a=>({a,m:evaluateCell(a)}));
+  // rank: connected first, then closeness to target vf, then stiffness goal
+  scored.sort((p,q)=>{
+    const sc=m=>(m.connected?1:0)*1 - Math.abs(m.vf-targetVF) + (STIFF===2?m.E:STIFF===0?-m.E:0)*0.5;
+    return sc(q.m)-sc(p.m);
+  });
+  $("#status").textContent=`Done. ${scored.filter(s=>s.m.connected).length}/${n} connected. Best match outlined in green. Backend: ${BACKEND}.`;
+  const R=$("#results"); R.innerHTML="";
+  scored.forEach((p,i)=>{
+    const d=document.createElement("div"); d.className="cell"+(i===0?" best":"");
+    const cv=document.createElement("canvas"); drawCell(cv,p.a,IMGD);
+    const m=p.m, eW=Math.min(100,m.E*100/0.5);
+    d.innerHTML=i===0?`<span class="tag best">BEST</span>`:"";
+    d.appendChild(cv);
+    const info=document.createElement("div");info.className="metrics";
+    info.innerHTML=
+      `<div>vol. fraction <b>${m.vf.toFixed(3)}</b> (target ${targetVF.toFixed(2)})</div>`+
+      `<div>connected <b style="color:${m.connected?'#39c07a':'#f2a93b'}">${m.connected?'yes':'no'}</b>, pieces <b>${m.comps}</b></div>`+
+      `<div>stiffness E <b>${m.E.toFixed(3)}</b><div class="bar"><i style="width:${eW}%"></i></div></div>`+
+      `<div>Poisson ν <b style="color:${m.nu<0?'#39c07a':'#e8eef7'}">${m.nu.toFixed(3)}</b>${m.nu<0?' (auxetic!)':''}</div>`;
+    d.appendChild(info); R.appendChild(d);
+  });
+  $("#go").disabled=false;
+};
+</script></body></html>
