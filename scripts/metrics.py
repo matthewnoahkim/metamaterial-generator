@@ -1,5 +1,5 @@
 """
-Stage 3: design-quality and performance metrics for 2D unit-cell images.
+Design-quality and performance metrics for 2D unit-cell images.
 
 Purpose in the project: this is the geometry-to-property evaluator. It labels
 training cells and scores generated cells with the SAME homogenization, so a

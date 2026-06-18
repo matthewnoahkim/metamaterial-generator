@@ -2,74 +2,62 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Metamaterial Unit-Cell Generator</title>
+<title>Metamaterial Generator — Procedural</title>
 <style>
-  *{box-sizing:border-box}
-  body{margin:0;background:#fff;color:#000}
-  a{color:#000}
-  header{padding:1em;border-bottom:1px solid #000}
-  .wrap{display:grid;grid-template-columns:14em 1fr;gap:2em;padding:1em;max-width:56em}
-  @media(max-width:36em){.wrap{grid-template-columns:1fr}}
-  label{display:block;margin:1em 0 .25em}
-  input[type=range]{width:100%;accent-color:#000}
-  .seg{display:flex;flex-wrap:wrap;gap:.25em}
-  .seg button,.go{background:#fff;color:#000;border:1px solid #000;padding:.25em .5em;cursor:pointer}
-  .seg button.on{background:#000;color:#fff}
-  .go{display:block;width:100%;margin-top:1em}
-  .go:disabled{border-style:dashed;cursor:default}
-  .results{display:grid;grid-template-columns:1fr 1fr;gap:1em}
-  @media(max-width:28em){.results{grid-template-columns:1fr}}
-  .cell{border:1px solid #000;padding:1em}
-  .cell.best{border-width:2px}
-  canvas{image-rendering:pixelated;border:1px solid #000;max-width:10em;width:100%;height:auto;display:block}
+canvas{image-rendering:pixelated;border:1px solid #000}
 </style>
 </head>
 <body>
-<header>
-  <p><a href="../">Diffusion</a> · Procedural</p>
-  <h1>Unit-cell generator</h1>
-</header>
 
-<div class="wrap">
-  <div>
-    <label>Target volume fraction: <span class="val" id="vfLabel">0.40</span></label>
-    <input type="range" id="vf" min="0.15" max="0.75" step="0.01" value="0.40">
+<center>
+<h1><b>METAMATERIAL GENERATOR</b></h1>
+<h3>Browser-Based Unit-Cell Design and Homogenization</h3>
+</center>
 
-    <label>Design goal</label>
-    <div class="seg" id="goal">
-      <button type="button" data-g="stiff" class="on">Max stiffness</button>
-      <button type="button" data-g="soft">Min stiffness</button>
-      <button type="button" data-g="auxetic">Min Poisson</button>
-      <button type="button" data-g="any">Match vf only</button>
-    </div>
+<hr>
 
-    <label>Symmetry</label>
-    <div class="seg" id="sym">
-      <button type="button" data-s="none">None</button>
-      <button type="button" data-s="mirror" class="on">Mirror</button>
-      <button type="button" data-s="quarter">Quarter</button>
-    </div>
+<p align="center"><span style="background-color:#FFFF00">Click <a href="../">HERE</a> for the diffusion model</span></p>
+<p align="center"><span style="background-color:#FFFF00">You are on the procedural generator page</span></p>
 
-    <label>Search effort: <span class="val" id="effLabel">40</span> candidates</label>
-    <input type="range" id="eff" min="16" max="80" step="8" value="40">
+<hr>
 
-    <button type="button" class="go" id="go">Generate</button>
-    <details>
-      <summary>How it works</summary>
-      <p>Candidates come from a stochastic generator (smoothed Gaussian-random-field topologies plus strut/lattice motifs), optionally folded to enforce symmetry. Each is scored by the same homogenization algorithm used to label the project dataset, ported to JavaScript and validated against the Python solver.</p>
-      <p><b>Auxetic note:</b> genuinely negative Poisson's ratio needs slender, well-proportioned re-entrant lattices that a coarse pixel grid can't represent, so the "Min Poisson" goal searches for the lowest value it can find and reports the real number. It is usually still positive. True auxetic designs need finer re-entrant geometry or real topology-optimization data, which is the documented limit of this project.</p>
-    </details>
-  </div>
+<center><h2>Procedural Unit-Cell Generator</h2></center>
 
-  <div>
-    <div id="status">Set targets and press Generate.</div>
-    <div class="results" id="results"></div>
-  </div>
-</div>
+<p><b>Target volume fraction:</b> <span id="vfLabel">0.40</span><br>
+<input type="range" id="vf" min="0.15" max="0.75" step="0.01" value="0.40" style="width:80%"></p>
+
+<p><b>Design goal:</b><br>
+<input type="radio" name="goal" value="stiff" checked> Max stiffness<br>
+<input type="radio" name="goal" value="soft"> Min stiffness<br>
+<input type="radio" name="goal" value="auxetic"> Min Poisson<br>
+<input type="radio" name="goal" value="any"> Match vf only</p>
+
+<p><b>Symmetry:</b><br>
+<input type="radio" name="sym" value="none"> None<br>
+<input type="radio" name="sym" value="mirror" checked> Mirror<br>
+<input type="radio" name="sym" value="quarter"> Quarter</p>
+
+<p><b>Search effort:</b> <span id="effLabel">40</span> candidates<br>
+<input type="range" id="eff" min="16" max="80" step="8" value="40" style="width:80%"></p>
+
+<p><input type="button" id="go" value="Generate"></p>
+
+<details>
+<summary>How it works</summary>
+<p>Candidates come from a stochastic generator (smoothed Gaussian-random-field topologies plus strut/lattice motifs), optionally folded to enforce symmetry. Each is scored by the same homogenization algorithm used to label the project dataset, ported to JavaScript and validated against the Python solver.</p>
+<p><b>Auxetic note:</b> genuinely negative Poisson's ratio needs slender, well-proportioned re-entrant lattices that a coarse pixel grid can't represent, so the "Min Poisson" goal searches for the lowest value it can find and reports the real number. It is usually still positive.</p>
+</details>
+
+<hr>
+
+<p id="status">Set targets and press Generate.</p>
+<div id="results"></div>
+
+<hr>
+
+<p><small>This page generates candidate periodic unit cells and evaluates each one with in-browser FEM homogenization (conjugate-gradient, 24&times;24 grid).</small></p>
 
 <script>
-// ---------- element stiffness (nu0=0.3), node order BL,BR,TR,TL ----------
 const KE = [
   [0.494505,0.178571,-0.302198,-0.013736,-0.247253,-0.178571,0.054945,0.013736],
   [0.178571,0.494505,0.013736,0.054945,-0.178571,-0.247253,-0.013736,-0.302198],
@@ -80,20 +68,17 @@ const KE = [
   [0.054945,-0.013736,-0.247253,0.178571,-0.302198,0.013736,0.494505,-0.178571],
   [0.013736,-0.302198,0.178571,-0.247253,-0.013736,0.054945,-0.178571,0.494505],
 ];
-const CHI0 = [ // (8 x 3): unit macro-strain nodal fields
+const CHI0 = [
   [-0.5,0,-0.5],[0,-0.5,0],[0.5,0,-0.5],[0,-0.5,0],
   [0.5,0,0.5],[0,0.5,0],[-0.5,0,0.5],[0,0.5,0]
 ];
 
-// ---------- seeded RNG ----------
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);
   t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
 
-// ---------- generator: smoothed Gaussian field + optional struts ----------
 function gaussianField(n,scale,rnd){
   let f=new Float32Array(n*n);
   for(let i=0;i<n*n;i++) f[i]=rnd()*2-1;
-  // separable box blur repeated ~ Gaussian; radius from scale
   const r=Math.max(1,Math.round(scale));
   for(let pass=0;pass<3;pass++){
     f=blur1d(f,n,r,true); f=blur1d(f,n,r,false);
@@ -114,7 +99,7 @@ function blur1d(f,n,r,horiz){
   }
   return out;
 }
-function addStruts(f,n,rnd){ // bias toward connected trusses
+function addStruts(f,n,rnd){
   const nb=2+Math.floor(rnd()*3);
   for(let s=0;s<nb;s++){
     const horiz=rnd()<0.5, pos=Math.floor(rnd()*n), w=1+Math.floor(rnd()*2);
@@ -138,7 +123,7 @@ function symmetrize(f,n,mode){
   }
   return out;
 }
-function thresholdToVF(f,n,vf){ // pick threshold so fraction solid = vf
+function thresholdToVF(f,n,vf){
   const s=Float32Array.from(f).sort(); const k=Math.floor((1-vf)*n*n);
   const thr=s[Math.min(n*n-1,Math.max(0,k))];
   const out=new Uint8Array(n*n);
@@ -146,9 +131,8 @@ function thresholdToVF(f,n,vf){ // pick threshold so fraction solid = vf
   return out;
 }
 
-// ---------- exact metrics: vf, connectivity (periodic), symmetry ----------
 function volumeFraction(a){let s=0;for(let i=0;i<a.length;i++)s+=a[i];return s/a.length;}
-function components(a,n){ // periodic 4-conn union-find -> {count, percX, percY}
+function components(a,n){
   const par=new Int32Array(n*n).map((_,i)=>i);
   function find(x){while(par[x]!==x){par[x]=par[par[x]];x=par[x];}return x;}
   function uni(x,y){par[find(x)]=find(y);}
@@ -160,9 +144,6 @@ function components(a,n){ // periodic 4-conn union-find -> {count, percX, percY}
   }
   const roots=new Set(); let solid=0;
   for(let i=0;i<n*n;i++) if(a[i]){roots.add(find(i));solid++;}
-  // percolation: does any component wrap (touches x=0 and x=n-1 in same comp,
-  // considering periodic wrap means: a component spanning is one that connects
-  // a left cell to a right cell non-trivially). Use simple span check.
   let percX=false,percY=false;
   for(let y=0;y<n;y++){ if(a[y*n+0]&&a[y*n+(n-1)]&&find(y*n+0)===find(y*n+(n-1))) percX=true; }
   for(let x=0;x<n;x++){ if(a[0*n+x]&&a[(n-1)*n+x]&&find(0*n+x)===find((n-1)*n+x)) percY=true; }
@@ -177,7 +158,6 @@ function symmetryScore(a,n){
   return Math.max(mx,my)/(n*n);
 }
 
-// ---------- downsample to m x m ----------
 function downsample(a,n,m){
   const out=new Uint8Array(m*m);
   for(let y=0;y<m;y++)for(let x=0;x<m;x++){
@@ -190,12 +170,10 @@ function downsample(a,n,m){
   return out;
 }
 
-// ---------- homogenization via matrix-free CG (24x24) ----------
 function homogenize(solid,m,voidScale=1e-3,maxit=400,tol=1e-5){
   const nel=m*m, ndof=2*m*m;
   const scale=new Float32Array(nel);
   for(let i=0;i<nel;i++) scale[i]= solid[i]? 1.0 : voidScale;
-  // edof per element (periodic node ids), node order BL,BR,TR,TL
   const edof=new Int32Array(nel*8);
   for(let ey=0;ey<m;ey++)for(let ex=0;ex<m;ex++){
     const e=ey*m+ex;
@@ -203,10 +181,8 @@ function homogenize(solid,m,voidScale=1e-3,maxit=400,tol=1e-5){
     const nodes=[nid(ex,ey),nid(ex+1,ey),nid(ex+1,ey+1),nid(ex,ey+1)];
     for(let k=0;k<4;k++){edof[e*8+2*k]=2*nodes[k];edof[e*8+2*k+1]=2*nodes[k]+1;}
   }
-  // fe = KE @ CHI0 (8x3)
   const fe=[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];
   for(let i=0;i<8;i++)for(let c=0;c<3;c++){let s=0;for(let k=0;k<8;k++)s+=KE[i][k]*CHI0[k][c];fe[i][c]=s;}
-  // diag of K
   const diag=new Float32Array(ndof);
   for(let e=0;e<nel;e++)for(let k=0;k<8;k++) diag[edof[e*8+k]]+=scale[e]*KE[k][k];
   function matvec(x){
@@ -218,7 +194,6 @@ function homogenize(solid,m,voidScale=1e-3,maxit=400,tol=1e-5){
     }
     return y;
   }
-  // assemble F (ndof x 3)
   const F=[new Float32Array(ndof),new Float32Array(ndof),new Float32Array(ndof)];
   for(let e=0;e<nel;e++)for(let k=0;k<8;k++)for(let c=0;c<3;c++) F[c][edof[e*8+k]]+=scale[e]*fe[k][c];
   const chi=[new Float32Array(ndof),new Float32Array(ndof),new Float32Array(ndof)];
@@ -240,11 +215,9 @@ function homogenize(solid,m,voidScale=1e-3,maxit=400,tol=1e-5){
     }
     chi[c]=x;
   }
-  // CH_ij
   const CH=[[0,0,0],[0,0,0],[0,0,0]]; const V=nel;
   for(let e=0;e<nel;e++){
     const o=e*8, sc=scale[e];
-    // d[c][k] = chi0[k][c] - chi[c][edof]
     const d=[[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0]];
     for(let c=0;c<3;c++)for(let k=0;k<8;k++) d[c][k]=CHI0[k][c]-chi[c][edof[o+k]];
     for(let i=0;i<3;i++){
@@ -253,12 +226,10 @@ function homogenize(solid,m,voidScale=1e-3,maxit=400,tol=1e-5){
       for(let j=0;j<3;j++){let s=0;for(let k=0;k<8;k++)s+=dik[k]*d[j][k];CH[i][j]+=sc*s/V;}
     }
   }
-  // symmetrize, invert 2x2 block for E, nu
   const C00=CH[0][0],C11=CH[1][1],C01=0.5*(CH[0][1]+CH[1][0]);
   const det=C00*C11-C01*C01;
   let Ex=0,Ey=0,nu=0,G=CH[2][2];
   if(Math.abs(det)>1e-12){
-    // S = inv([[C00,C01],[C01,C11]])
     const S00=C11/det,S11=C00/det,S01=-C01/det;
     Ex=1/S00; Ey=1/S11; nu=-S01/S00;
   }
@@ -266,8 +237,7 @@ function homogenize(solid,m,voidScale=1e-3,maxit=400,tol=1e-5){
 }
 function dot(a,b){let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;}
 
-// ---------- search pipeline ----------
-const N=48, M=24; // display grid, homogenization grid
+const N=48, M=24;
 function genCandidate(vf,sym,seed){
   const rnd=mulberry32(seed);
   let f=gaussianField(N, 1.5+rnd()*3.5, rnd);
@@ -286,35 +256,27 @@ function evaluate(a){
           sym:symmetryScore(a,N),E:Math.max(0,E),nu:phys.nu};
 }
 function score(m,vfT,goal){
-  let s=-Math.abs(m.vf-vfT)*4;          // vf match dominates
-  if(!m.connected) s-=1.0;               // strongly prefer connected
-  s-=Math.max(0,m.comps-1)*0.05;         // prefer few pieces
+  let s=-Math.abs(m.vf-vfT)*4;
+  if(!m.connected) s-=1.0;
+  s-=Math.max(0,m.comps-1)*0.05;
   if(goal==="stiff") s+=m.E*2.0;
   else if(goal==="soft") s-=m.E*2.0;
-  else if(goal==="auxetic") s-=m.nu*1.5; // minimize Poisson
+  else if(goal==="auxetic") s-=m.nu*1.5;
   return s;
 }
+function goalName(g){return {stiff:"max stiffness",soft:"min stiffness",auxetic:"min Poisson",any:"match vf only"}[g];}
 
-// ---------- UI ----------
-const $=s=>document.querySelector(s);
-let GOAL="stiff", SYM="mirror";
-$("#vf").addEventListener("input",e=>{$("#vfLabel").textContent=(+e.target.value).toFixed(2);});
-$("#eff").addEventListener("input",e=>{$("#effLabel").textContent=e.target.value;});
-$("#goal").addEventListener("click",e=>{
-  if(!e.target.dataset.g)return;
-  [...$("#goal").children].forEach(b=>b.classList.remove("on"));
-  e.target.classList.add("on");
-  GOAL=e.target.dataset.g;
-});
-$("#sym").addEventListener("click",e=>{
-  if(!e.target.dataset.s)return;
-  [...$("#sym").children].forEach(b=>b.classList.remove("on"));
-  e.target.classList.add("on");
-  SYM=e.target.dataset.s;
-});
+const vf=document.getElementById("vf");
+const eff=document.getElementById("eff");
+const go=document.getElementById("go");
+const status=document.getElementById("status");
+const results=document.getElementById("results");
+
+vf.oninput=()=>{document.getElementById("vfLabel").textContent=(+vf.value).toFixed(2);};
+eff.oninput=()=>{document.getElementById("effLabel").textContent=eff.value;};
 
 function drawCell(canvas,a){
-  const tile=2, px=4, sz=N*tile*px;
+  const tile=2;
   canvas.width=N*tile; canvas.height=N*tile;
   const ctx=canvas.getContext("2d");
   const img=ctx.createImageData(N*tile,N*tile);
@@ -326,40 +288,44 @@ function drawCell(canvas,a){
   ctx.putImageData(img,0,0);
 }
 
-$("#go").addEventListener("click",async()=>{
-  const vfT=+$("#vf").value, eff=+$("#eff").value;
-  $("#go").disabled=true; $("#results").innerHTML="";
+go.onclick=async()=>{
+  const vfT=+vf.value, effort=+eff.value;
+  const goal=document.querySelector('input[name="goal"]:checked').value;
+  const sym=document.querySelector('input[name="sym"]:checked').value;
+  go.disabled=true; results.innerHTML="";
   const seedBase=(Math.random()*1e9)|0;
   let pool=[];
-  for(let i=0;i<eff;i++){
-    $("#status").textContent=`Generating and evaluating… ${i+1}/${eff}`;
-    const a=genCandidate(vfT,SYM,seedBase+i*131+7);
+  for(let i=0;i<effort;i++){
+    status.textContent="Generating and evaluating… "+(i+1)+"/"+effort;
+    const a=genCandidate(vfT,sym,seedBase+i*131+7);
     const m=evaluate(a);
-    pool.push({a,m,s:score(m,vfT,GOAL)});
-    if(i%4===0) await new Promise(r=>setTimeout(r,0)); // keep UI responsive
+    pool.push({a,m,s:score(m,vfT,goal)});
+    if(i%4===0) await new Promise(r=>setTimeout(r,0));
   }
   pool.sort((p,q)=>q.s-p.s);
   const top=pool.slice(0,4);
-  $("#status").textContent=`Done. Showing the 4 best of ${eff} candidates for target vf ${vfT.toFixed(2)}, goal "${goalName(GOAL)}".`;
-  const R=$("#results"); R.innerHTML="";
+  status.textContent="Done. Showing the 4 best of "+effort+" candidates for target vf "+vfT.toFixed(2)+", goal \""+goalName(goal)+"\".";
+  const tbl=document.createElement("table");
+  tbl.border=1; tbl.cellPadding=8;
   top.forEach((p,i)=>{
-    const d=document.createElement("div"); d.className="cell"+(i===0?" best":"");
-    const cv=document.createElement("canvas"); drawCell(cv,p.a);
-    d.innerHTML=i===0?"best<br>":"";
-    d.appendChild(cv);
     const m=p.m;
-    const info=document.createElement("div");
-    info.innerHTML=
-      `vf ${m.vf.toFixed(3)} / ${vfT.toFixed(2)}<br>`+
-      `connected ${m.connected?"yes":"no"}, ${m.comps} pieces<br>`+
-      `sym ${m.sym.toFixed(2)}<br>`+
-      `E ${m.E.toFixed(3)}, nu ${m.nu.toFixed(3)}${m.nu<0?" auxetic":""}`;
-    d.appendChild(info);
-    R.appendChild(d);
+    const tr=document.createElement("tr");
+    const td1=document.createElement("td");
+    const td2=document.createElement("td");
+    const cv=document.createElement("canvas");
+    drawCell(cv,p.a);
+    td1.appendChild(cv);
+    td2.innerHTML=(i===0?"<b>best match</b><br>":"")+
+      "vf "+m.vf.toFixed(3)+" / "+vfT.toFixed(2)+"<br>"+
+      "connected "+(m.connected?"yes":"no")+", "+m.comps+" pieces<br>"+
+      "sym "+m.sym.toFixed(2)+"<br>"+
+      "E "+m.E.toFixed(3)+", nu "+m.nu.toFixed(3)+(m.nu<0?" auxetic":"");
+    tr.appendChild(td1); tr.appendChild(td2);
+    tbl.appendChild(tr);
   });
-  $("#go").disabled=false;
-});
-function goalName(g){return {stiff:"max stiffness",soft:"min stiffness",auxetic:"min Poisson",any:"match vf only"}[g];}
+  results.appendChild(tbl);
+  go.disabled=false;
+};
 </script>
 </body>
 </html>

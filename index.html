@@ -2,60 +2,61 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Metamaterial Generator — Diffusion Model (in-browser)</title>
+<title>Metamaterial Generator — Diffusion</title>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
 <style>
-  *{box-sizing:border-box}
-  body{margin:0;background:#fff;color:#000}
-  a{color:#000}
-  header{padding:1em;border-bottom:1px solid #000}
-  .wrap{display:grid;grid-template-columns:14em 1fr;gap:2em;padding:1em;max-width:56em}
-  @media(max-width:36em){.wrap{grid-template-columns:1fr}}
-  label{display:block;margin:1em 0 .25em}
-  input[type=range]{width:100%;accent-color:#000}
-  .seg{display:flex;flex-wrap:wrap;gap:.25em}
-  .seg button,.go{background:#fff;color:#000;border:1px solid #000;padding:.25em .5em;cursor:pointer}
-  .seg button.on{background:#000;color:#fff}
-  .go{display:block;width:100%;margin-top:1em}
-  .go:disabled{border-style:dashed;cursor:default}
-  .results{display:grid;grid-template-columns:1fr 1fr;gap:1em}
-  @media(max-width:28em){.results{grid-template-columns:1fr}}
-  .cell{border:1px solid #000;padding:1em}
-  .cell.best{border-width:2px}
-  canvas{image-rendering:pixelated;border:1px solid #000;max-width:10em;width:100%;height:auto;display:block}
+canvas{image-rendering:pixelated;border:1px solid #000}
 </style>
 </head>
 <body>
-<header>
-  <p>Diffusion · <a href="procedural/">Procedural</a></p>
-  <h1>Diffusion model</h1>
-</header>
-<div class="wrap">
-  <div>
-    <label>Target volume fraction: <span class="val" id="vfL">0.45</span></label>
-    <input type="range" id="vf" min="0.37" max="0.57" step="0.01" value="0.45">
-    <label>Stiffness class</label>
-    <div class="seg" id="stiff">
-      <button type="button" data-i="0">Low</button><button type="button" data-i="1">Medium</button><button type="button" data-i="2" class="on">High</button>
-    </div>
-    <label>Symmetry</label>
-    <div class="seg"><button type="button" id="symT">Enforce biaxial</button></div>
-    <label>Guidance: <span class="val" id="guidL">3.0</span></label>
-    <input type="range" id="guid" min="1" max="5" step="0.5" value="3" oninput="document.getElementById('guidL').textContent=(+this.value).toFixed(1)">
-    <label>Denoising steps: <span class="val" id="stepsL">40</span></label>
-    <input type="range" id="steps" min="20" max="60" step="10" value="40" oninput="document.getElementById('stepsL').textContent=this.value">
-    <button type="button" class="go" id="go">Generate</button>
-    <details><summary>How it works</summary>
-      <p>The ONNX graph is the denoiser; the DDIM loop, classifier-free guidance, and the evaluator all run in JavaScript. The numpy-equivalent pipeline matches the PyTorch sampler at 0.9989 IoU.</p>
-      <p>Volume-fraction control is calibrated and reliable in roughly 0.37–0.57 (the model's response is monotonic but compressed). Stiffness conditioning separates low vs high by about 2×. There is no auxetic control: the training set has essentially no negative-Poisson cells, so ν is reported but not targetable.</p>
-    </details>
-  </div>
-  <div>
-    <div id="status">Press Generate.</div>
-    <div class="results" id="results"></div>
-  </div>
-</div>
+
+<center>
+<h1><b>METAMATERIAL GENERATOR</b></h1>
+<h3>Browser-Based Unit-Cell Design and Homogenization</h3>
+</center>
+
+<hr>
+
+<p align="center"><span style="background-color:#FFFF00">You are on the diffusion model page</span></p>
+<p align="center"><span style="background-color:#FFFF00">Click <a href="procedural/">HERE</a> for the procedural generator</span></p>
+
+<hr>
+
+<center><h2>Diffusion Model</h2></center>
+
+<p><b>Target volume fraction:</b> <span id="vfL">0.45</span><br>
+<input type="range" id="vf" min="0.37" max="0.57" step="0.01" value="0.45" style="width:80%"></p>
+
+<p><b>Stiffness class:</b><br>
+<input type="radio" name="stiff" value="0"> Low<br>
+<input type="radio" name="stiff" value="1"> Medium<br>
+<input type="radio" name="stiff" value="2" checked> High</p>
+
+<p><b>Symmetry:</b><br>
+<input type="checkbox" id="symT"> Enforce biaxial symmetry</p>
+
+<p><b>Guidance:</b> <span id="guidL">3.0</span><br>
+<input type="range" id="guid" min="1" max="5" step="0.5" value="3" style="width:80%"></p>
+
+<p><b>Denoising steps:</b> <span id="stepsL">40</span><br>
+<input type="range" id="steps" min="20" max="60" step="10" value="40" style="width:80%"></p>
+
+<p><input type="button" id="go" value="Generate"></p>
+
+<details><summary>How it works</summary>
+<p>The ONNX graph is the denoiser; the DDIM loop, classifier-free guidance, and the evaluator all run in JavaScript.</p>
+<p>Volume-fraction control is calibrated and reliable in roughly 0.37–0.57. Stiffness conditioning separates low vs high by about 2&times;.</p>
+</details>
+
+<hr>
+
+<p id="status">Press Generate.</p>
+<div id="results"></div>
+
+<hr>
+
+<p><small>This page runs the trained conditional diffusion model (DDPM) in your browser via ONNX Runtime Web.</small></p>
+
 <script>
 const KE = [
   [0.494505,0.178571,-0.302198,-0.013736,-0.247253,-0.178571,0.054945,0.013736],
@@ -345,16 +346,16 @@ function evaluateCell(a){
 }
 
 // ===================== UI =====================
-const $=s=>document.querySelector(s);
-let STIFF=2, SYM=false;
-$("#vf").addEventListener("input",e=>{$("#vfL").textContent=(+e.target.value).toFixed(2);});
-$("#stiff").addEventListener("click",e=>{
-  if(e.target.dataset.i===undefined)return;
-  [...$("#stiff").children].forEach(b=>b.classList.remove("on"));
-  e.target.classList.add("on");
-  STIFF=+e.target.dataset.i;
-});
-$("#symT").addEventListener("click",()=>{SYM=!SYM;$("#symT").classList.toggle("on",SYM);});
+const vf=document.getElementById("vf");
+const guid=document.getElementById("guid");
+const steps=document.getElementById("steps");
+const go=document.getElementById("go");
+const status=document.getElementById("status");
+const results=document.getElementById("results");
+
+vf.oninput=()=>{document.getElementById("vfL").textContent=(+vf.value).toFixed(2);};
+guid.oninput=()=>{document.getElementById("guidL").textContent=(+guid.value).toFixed(1);};
+steps.oninput=()=>{document.getElementById("stepsL").textContent=steps.value;};
 
 function drawCell(canvas,a,n){
   const tile=2;
@@ -368,23 +369,24 @@ function drawCell(canvas,a,n){
   ctx.putImageData(img,0,0);
 }
 
-$("#go").addEventListener("click",async()=>{
+go.onclick=async()=>{
   if(!SESSION){
-    $("#status").textContent="Loading model…";
-    try{ const be=await loadModel(); $("#status").textContent="Model loaded ("+be+" backend)."; }
-    catch(e){ $("#status").textContent="Failed to load model. Run from a local web server (see README) so the .onnx file can be fetched. Error: "+e.message; return; }
+    status.textContent="Loading model…";
+    try{ const be=await loadModel(); status.textContent="Model loaded ("+be+" backend)."; }
+    catch(e){ status.textContent="Failed to load model. Run from a local web server so the .onnx file can be fetched. Error: "+e.message; return; }
   }
-  $("#go").disabled=true; $("#results").innerHTML="";
-  const targetVF=+$("#vf").value;
+  go.disabled=true; results.innerHTML="";
+  const targetVF=+vf.value;
+  const STIFF=+document.querySelector('input[name="stiff"]:checked').value;
+  const SYM=document.getElementById("symT").checked;
   const req=vfRequestFor(targetVF);
-  const guidance=+$("#guid").value, steps=+$("#steps").value, n=8;
+  const guidance=+guid.value, nSteps=+steps.value, n=8;
   const stiffName=["low","medium","high"][STIFF];
-  $("#status").textContent=`Sampling ${n} cells (target vf ${targetVF.toFixed(2)} → model request ${req.toFixed(2)}, stiffness ${stiffName})…`;
-  let cells=await sampleBatch(n,req,STIFF,guidance,steps,p=>{
-    $("#status").textContent=`Denoising… ${Math.round(p*100)}%`;
+  status.textContent="Sampling "+n+" cells (target vf "+targetVF.toFixed(2)+", stiffness "+stiffName+")…";
+  let cells=await sampleBatch(n,req,STIFF,guidance,nSteps,p=>{
+    status.textContent="Denoising… "+Math.round(p*100)+"%";
   });
   if(SYM){
-    // mirror-average then re-threshold for biaxial symmetry
     cells=cells.map(a=>{
       const n2=IMGD,out=new Uint8Array(n2*n2);
       for(let y=0;y<n2;y++)for(let x=0;x<n2;x++){
@@ -395,28 +397,31 @@ $("#go").addEventListener("click",async()=>{
       return out;
     });
   }
-  $("#status").textContent="Evaluating with in-browser homogenization…";
+  status.textContent="Evaluating with in-browser homogenization…";
   const scored=cells.map(a=>({a,m:evaluateCell(a)}));
-  // rank: connected first, then closeness to target vf, then stiffness goal
   scored.sort((p,q)=>{
     const sc=m=>(m.connected?1:0)*1 - Math.abs(m.vf-targetVF) + (STIFF===2?m.E:STIFF===0?-m.E:0)*0.5;
     return sc(q.m)-sc(p.m);
   });
-  $("#status").textContent=`Done. ${scored.filter(s=>s.m.connected).length}/${n} connected.`;
-  const R=$("#results"); R.innerHTML="";
+  status.textContent="Done. "+scored.filter(s=>s.m.connected).length+"/"+n+" connected.";
+  const tbl=document.createElement("table");
+  tbl.border=1; tbl.cellPadding=8;
   scored.forEach((p,i)=>{
-    const d=document.createElement("div"); d.className="cell"+(i===0?" best":"");
-    const cv=document.createElement("canvas"); drawCell(cv,p.a,IMGD);
     const m=p.m;
-    d.innerHTML=i===0?"best<br>":"";
-    d.appendChild(cv);
-    const info=document.createElement("div");
-    info.innerHTML=
-      `vf ${m.vf.toFixed(3)} / ${targetVF.toFixed(2)}<br>`+
-      `connected ${m.connected?"yes":"no"}, ${m.comps} pieces<br>`+
-      `E ${m.E.toFixed(3)}, nu ${m.nu.toFixed(3)}${m.nu<0?" auxetic":""}`;
-    d.appendChild(info); R.appendChild(d);
+    const tr=document.createElement("tr");
+    const td1=document.createElement("td");
+    const td2=document.createElement("td");
+    const cv=document.createElement("canvas");
+    drawCell(cv,p.a,IMGD);
+    td1.appendChild(cv);
+    td2.innerHTML=(i===0?"<b>best match</b><br>":"")+
+      "vf "+m.vf.toFixed(3)+" / "+targetVF.toFixed(2)+"<br>"+
+      "connected "+(m.connected?"yes":"no")+", "+m.comps+" pieces<br>"+
+      "E "+m.E.toFixed(3)+", nu "+m.nu.toFixed(3)+(m.nu<0?" auxetic":"");
+    tr.appendChild(td1); tr.appendChild(td2);
+    tbl.appendChild(tr);
   });
-  $("#go").disabled=false;
-});
+  results.appendChild(tbl);
+  go.disabled=false;
+};
 </script></body></html>

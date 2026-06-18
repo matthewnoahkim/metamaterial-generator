@@ -1,5 +1,5 @@
 """
-Stage 2: Dataset preparation for 2D unit-cell images.
+Dataset preparation for 2D unit-cell images.
 
 Generates binary 64x64 unit cells across six pattern families and writes a
 labels.csv with: volume fraction, connectivity, symmetry, approximate
