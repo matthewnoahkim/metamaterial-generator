@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "Metamaterial Generator",
+			"path": "."
+		},
+		{
+			"name": ".git",
+			"path": "../../../Downloads/metamaterial-generator-repo/.git"
+		}
+	],
+	"settings": {}
+}

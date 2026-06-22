@@ -2,29 +2,37 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Metamaterial Generator — Procedural</title>
 <style>
 canvas{image-rendering:pixelated;border:1px solid #000}
+.main{display:flex;align-items:flex-start}
+.left,.right{width:50%;box-sizing:border-box;padding:0 16px;vertical-align:top}
+.left{border-right:1px solid #000;padding-right:20px}
+.right{padding-left:20px}
+#status{font-weight:bold;margin:0 0 12px}
+#results .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+#results .cell{border:1px solid #000;padding:6px;text-align:center;font-size:11px;line-height:1.4}
+#results .cell.best{border:2px solid #000}
+#results .cell canvas{width:100%;max-width:110px;height:auto;display:block;margin:0 auto 6px}
+@media(max-width:760px){.main{flex-direction:column}.left,.right{width:100%;border:none;padding:0 16px}}
 </style>
 </head>
 <body>
 
 <center>
 <h1><b>METAMATERIAL GENERATOR</b></h1>
-<h3>Browser-Based Unit-Cell Design and Homogenization</h3>
 </center>
-
-<hr>
 
 <p align="center"><span style="background-color:#FFFF00">You are on the procedural generator page</span></p>
 <p align="center"><span style="background-color:#FFFF00">Click <a href="../">HERE</a> for the diffusion model</span></p>
 
 <hr>
 
-<center><h2>Procedural Generator</h2></center>
+<div class="main">
+<div class="left">
+<h2>Procedural Generator</h2>
 
 <p><b>Target volume fraction:</b> <span id="vfLabel">0.40</span><br>
-<input type="range" id="vf" min="0.15" max="0.75" step="0.01" value="0.40" style="width:80%"></p>
+<input type="range" id="vf" min="0.15" max="0.75" step="0.01" value="0.40" style="width:90%"></p>
 
 <p><b>Design goal:</b><br>
 <input type="radio" name="goal" value="stiff" checked> Max stiffness<br>
@@ -38,23 +46,19 @@ canvas{image-rendering:pixelated;border:1px solid #000}
 <input type="radio" name="sym" value="quarter"> Quarter</p>
 
 <p><b>Search effort:</b> <span id="effLabel">40</span> candidates<br>
-<input type="range" id="eff" min="16" max="80" step="8" value="40" style="width:80%"></p>
+<input type="range" id="eff" min="16" max="80" step="8" value="40" style="width:90%"></p>
 
 <p><input type="button" id="go" value="Generate"></p>
 
-<details><summary>How it works</summary>
 <p>Candidates come from a stochastic generator (smoothed Gaussian-random-field topologies plus strut/lattice motifs), optionally folded to enforce symmetry. Each is scored by the same homogenization algorithm used to label the project dataset, ported to JavaScript and validated against the Python solver.</p>
-<p><b>Auxetic note:</b> genuinely negative Poisson's ratio needs slender, well-proportioned re-entrant lattices that a coarse pixel grid can't represent, so the "Min Poisson" goal searches for the lowest value it can find and reports the real number. It is usually still positive.</p>
-</details>
+<p><b>Auxetic:</b> Negative Poisson's ratio needs slender, well-proportioned re-entrant lattices that a coarse pixel grid can't represent, so the "Min Poisson" goal searches for the lowest value it can find and reports the real number. It is usually still positive.</p>
+</div>
 
-<hr>
-
+<div class="right">
 <p id="status">Press Generate.</p>
 <div id="results"></div>
-
-<hr>
-
-<p><small>This page generates candidate periodic unit cells and evaluates each one with in-browser FEM homogenization.</small></p>
+</div>
+</div>
 
 <script>
 const KE = [
@@ -302,27 +306,27 @@ go.onclick=async()=>{
     if(i%4===0) await new Promise(r=>setTimeout(r,0));
   }
   pool.sort((p,q)=>q.s-p.s);
-  const top=pool.slice(0,4);
-  status.textContent="Done. Showing the 4 best of "+effort+" candidates for target vf "+vfT.toFixed(2)+", goal \""+goalName(goal)+"\".";
-  const tbl=document.createElement("table");
-  tbl.border=1; tbl.cellPadding=8;
+  const top=pool.slice(0,8);
+  status.textContent="Done. Showing the 8 best of "+effort+" candidates for target vf "+vfT.toFixed(2)+", goal \""+goalName(goal)+"\".";
+  const grid=document.createElement("div");
+  grid.className="grid";
   top.forEach((p,i)=>{
     const m=p.m;
-    const tr=document.createElement("tr");
-    const td1=document.createElement("td");
-    const td2=document.createElement("td");
+    const cell=document.createElement("div");
+    cell.className="cell"+(i===0?" best":"");
     const cv=document.createElement("canvas");
     drawCell(cv,p.a);
-    td1.appendChild(cv);
-    td2.innerHTML=(i===0?"<b>best match</b><br>":"")+
+    cell.appendChild(cv);
+    const cap=document.createElement("div");
+    cap.innerHTML=(i===0?"<b>best match</b><br>":"")+
       "vf "+m.vf.toFixed(3)+" / "+vfT.toFixed(2)+"<br>"+
       "connected "+(m.connected?"yes":"no")+", "+m.comps+" pieces<br>"+
       "sym "+m.sym.toFixed(2)+"<br>"+
       "E "+m.E.toFixed(3)+", nu "+m.nu.toFixed(3)+(m.nu<0?" auxetic":"");
-    tr.appendChild(td1); tr.appendChild(td2);
-    tbl.appendChild(tr);
+    cell.appendChild(cap);
+    grid.appendChild(cell);
   });
-  results.appendChild(tbl);
+  results.appendChild(grid);
   go.disabled=false;
 };
 </script>

@@ -2,30 +2,38 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Metamaterial Generator — Diffusion</title>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
 <style>
 canvas{image-rendering:pixelated;border:1px solid #000}
+.main{display:flex;align-items:flex-start}
+.left,.right{width:50%;box-sizing:border-box;padding:0 16px;vertical-align:top}
+.left{border-right:1px solid #000;padding-right:20px}
+.right{padding-left:20px}
+#status{font-weight:bold;margin:0 0 12px}
+#results .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+#results .cell{border:1px solid #000;padding:6px;text-align:center;font-size:11px;line-height:1.4}
+#results .cell.best{border:2px solid #000}
+#results .cell canvas{width:100%;max-width:110px;height:auto;display:block;margin:0 auto 6px}
+@media(max-width:760px){.main{flex-direction:column}.left,.right{width:100%;border:none;padding:0 16px}}
 </style>
 </head>
 <body>
 
 <center>
 <h1><b>METAMATERIAL GENERATOR</b></h1>
-<h3>Browser-Based Unit-Cell Design and Homogenization</h3>
 </center>
-
-<hr>
 
 <p align="center"><span style="background-color:#FFFF00">You are on the diffusion model page</span></p>
 <p align="center"><span style="background-color:#FFFF00">Click <a href="procedural/">HERE</a> for the procedural generator</span></p>
 
 <hr>
 
-<center><h2>Diffusion Model</h2></center>
+<div class="main">
+<div class="left">
+<h2>Diffusion Model</h2>
 
 <p><b>Target volume fraction:</b> <span id="vfL">0.45</span><br>
-<input type="range" id="vf" min="0.37" max="0.57" step="0.01" value="0.45" style="width:80%"></p>
+<input type="range" id="vf" min="0.37" max="0.57" step="0.01" value="0.45" style="width:90%"></p>
 
 <p><b>Stiffness class:</b><br>
 <input type="radio" name="stiff" value="0"> Low<br>
@@ -36,26 +44,22 @@ canvas{image-rendering:pixelated;border:1px solid #000}
 <input type="checkbox" id="symT"> Enforce biaxial symmetry</p>
 
 <p><b>Guidance:</b> <span id="guidL">3.0</span><br>
-<input type="range" id="guid" min="1" max="5" step="0.5" value="3" style="width:80%"></p>
+<input type="range" id="guid" min="1" max="5" step="0.5" value="3" style="width:90%"></p>
 
 <p><b>Denoising steps:</b> <span id="stepsL">40</span><br>
-<input type="range" id="steps" min="20" max="60" step="10" value="40" style="width:80%"></p>
+<input type="range" id="steps" min="20" max="60" step="10" value="40" style="width:90%"></p>
 
 <p><input type="button" id="go" value="Generate"></p>
 
-<details><summary>How it works</summary>
 <p>The ONNX graph is the denoiser; the DDIM loop, classifier-free guidance, and the evaluator all run in JavaScript.</p>
 <p>Volume-fraction control is calibrated and reliable in roughly 0.37–0.57. Stiffness conditioning separates low vs high by about 2&times;.</p>
-</details>
+</div>
 
-<hr>
-
+<div class="right">
 <p id="status">Press Generate.</p>
 <div id="results"></div>
-
-<hr>
-
-<p><small>This page runs the trained conditional diffusion model (DDPM) in your browser via ONNX Runtime Web.</small></p>
+</div>
+</div>
 
 <script>
 const KE = [
@@ -404,24 +408,24 @@ go.onclick=async()=>{
     return sc(q.m)-sc(p.m);
   });
   status.textContent="Done. "+scored.filter(s=>s.m.connected).length+"/"+n+" connected.";
-  const tbl=document.createElement("table");
-  tbl.border=1; tbl.cellPadding=8;
+  const grid=document.createElement("div");
+  grid.className="grid";
   scored.forEach((p,i)=>{
     const m=p.m;
-    const tr=document.createElement("tr");
-    const td1=document.createElement("td");
-    const td2=document.createElement("td");
+    const cell=document.createElement("div");
+    cell.className="cell"+(i===0?" best":"");
     const cv=document.createElement("canvas");
     drawCell(cv,p.a,IMGD);
-    td1.appendChild(cv);
-    td2.innerHTML=(i===0?"<b>best match</b><br>":"")+
+    cell.appendChild(cv);
+    const cap=document.createElement("div");
+    cap.innerHTML=(i===0?"<b>best match</b><br>":"")+
       "vf "+m.vf.toFixed(3)+" / "+targetVF.toFixed(2)+"<br>"+
       "connected "+(m.connected?"yes":"no")+", "+m.comps+" pieces<br>"+
       "E "+m.E.toFixed(3)+", nu "+m.nu.toFixed(3)+(m.nu<0?" auxetic":"");
-    tr.appendChild(td1); tr.appendChild(td2);
-    tbl.appendChild(tr);
+    cell.appendChild(cap);
+    grid.appendChild(cell);
   });
-  results.appendChild(tbl);
+  results.appendChild(grid);
   go.disabled=false;
 };
 </script></body></html>
