@@ -3,55 +3,92 @@
 <head>
 <meta charset="utf-8">
 <style>
+body{margin:16px;font-family:Georgia,"Times New Roman",Times,serif;font-size:20px;background:#fff;color:#000}
+nav a{color:#000;margin-right:12px}
+nav a.active{text-decoration:none}
+nav a:not(.active){text-decoration:underline}
+h1{font-size:2em;font-weight:bold;margin:16px 0}
+hr{border:none;border-top:1px solid #ccc;margin:16px 0}
+.main{display:flex;align-items:flex-start;gap:24px}
+.left{flex:1;min-width:0}
+.right{flex:2;min-width:0}
+.ctrl{margin:16px 0}
+.ctrl label{display:block;margin-bottom:4px}
+input[type=range]{width:100%;max-width:320px;display:block;margin-top:4px;accent-color:#000;color:#000}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;background:#000;border:1px solid #000;border-radius:50%;cursor:pointer}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#000;border:1px solid #000;border-radius:50%;cursor:pointer}
+input[type=range]::-moz-range-progress{background:#000}
+input[type=range]::-moz-range-track{background:#ccc}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{padding:4px 12px;border:1px solid #999;background:#fff;font-family:inherit;font-size:17px;cursor:pointer}
+.seg button.on{background:#000;color:#fff;border-color:#000}
+#go{display:block;width:100%;max-width:320px;padding:6px;margin:16px 0;font-family:inherit;font-size:inherit;border:1px solid #000;background:#fff;cursor:pointer}
+#go:disabled{opacity:.55;cursor:default}
+#status{margin:0 0 12px}
+.howitworks{margin-top:56px;font-size:14px;line-height:1.45;color:#333;max-width:320px}
+.howitworks h3{font-size:14px;font-weight:bold;margin:0 0 6px}
+.howitworks p{margin:0 0 8px}
 canvas{image-rendering:pixelated;border:1px solid #000}
-.main{display:flex;align-items:flex-start}
-.left,.right{width:50%;box-sizing:border-box;padding:0 16px;vertical-align:top}
-.left{border-right:1px solid #000;padding-right:20px}
-.right{padding-left:20px}
-#status{font-weight:bold;margin:0 0 12px}
 #results .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-#results .cell{border:1px solid #000;padding:6px;text-align:center;font-size:11px;line-height:1.4}
+#results .cell{border:1px solid #000;padding:6px;text-align:center;font-size:15px;line-height:1.4}
 #results .cell.best{border:2px solid #000}
 #results .cell canvas{width:100%;max-width:110px;height:auto;display:block;margin:0 auto 6px}
-@media(max-width:760px){.main{flex-direction:column}.left,.right{width:100%;border:none;padding:0 16px}}
+@media(max-width:760px){.main{flex-direction:column}}
 </style>
 </head>
 <body>
 
-<center>
-<h1><b>METAMATERIAL GENERATOR</b></h1>
-</center>
+<nav>
+  <a href="../">Diffusion</a>
+  <a class="active" href=".">Procedural</a>
+</nav>
 
-<p align="center"><span style="background-color:#FFFF00">You are on the procedural generator page</span></p>
-<p align="center"><span style="background-color:#FFFF00">Click <a href="../">HERE</a> for the diffusion model</span></p>
+<h1>Procedural generator</h1>
 
 <hr>
 
 <div class="main">
 <div class="left">
-<h2>Procedural Generator</h2>
 
-<p><b>Target volume fraction:</b> <span id="vfLabel">0.40</span><br>
-<input type="range" id="vf" min="0.15" max="0.75" step="0.01" value="0.40" style="width:90%"></p>
+<div class="ctrl">
+<label>Target volume fraction</label>
+<span id="vfLabel">0.40</span>
+<input type="range" id="vf" min="0.15" max="0.75" step="0.01" value="0.40">
+</div>
 
-<p><b>Design goal:</b><br>
-<input type="radio" name="goal" value="stiff" checked> Max stiffness<br>
-<input type="radio" name="goal" value="soft"> Min stiffness<br>
-<input type="radio" name="goal" value="auxetic"> Min Poisson<br>
-<input type="radio" name="goal" value="any"> Match vf only</p>
+<div class="ctrl">
+<label>Design goal</label>
+<div class="seg" id="goal">
+  <button type="button" data-g="stiff" class="on">Max stiffness</button>
+  <button type="button" data-g="soft">Min stiffness</button>
+  <button type="button" data-g="auxetic">Min Poisson</button>
+  <button type="button" data-g="any">Match vf only</button>
+</div>
+</div>
 
-<p><b>Symmetry:</b><br>
-<input type="radio" name="sym" value="none"> None<br>
-<input type="radio" name="sym" value="mirror" checked> Mirror<br>
-<input type="radio" name="sym" value="quarter"> Quarter</p>
+<div class="ctrl">
+<label>Symmetry</label>
+<div class="seg" id="sym">
+  <button type="button" data-s="none">None</button>
+  <button type="button" data-s="mirror" class="on">Mirror</button>
+  <button type="button" data-s="quarter">Quarter</button>
+</div>
+</div>
 
-<p><b>Search effort:</b> <span id="effLabel">40</span> candidates<br>
-<input type="range" id="eff" min="16" max="80" step="8" value="40" style="width:90%"></p>
+<div class="ctrl">
+<label>Search effort</label>
+<span id="effLabel">40</span> candidates
+<input type="range" id="eff" min="16" max="80" step="8" value="40">
+</div>
 
-<p><input type="button" id="go" value="Generate"></p>
+<button type="button" id="go">Generate</button>
 
+<div class="howitworks">
+<h3>How it works</h3>
 <p>Candidates come from a stochastic generator (smoothed Gaussian-random-field topologies plus strut/lattice motifs), optionally folded to enforce symmetry. Each is scored by the same homogenization algorithm used to label the project dataset, ported to JavaScript and validated against the Python solver.</p>
-<p><b>Auxetic:</b> Negative Poisson's ratio needs slender, well-proportioned re-entrant lattices that a coarse pixel grid can't represent, so the "Min Poisson" goal searches for the lowest value it can find and reports the real number. It is usually still positive.</p>
+<p><b>Auxetic note:</b> Negative Poisson's ratio needs slender, well-proportioned re-entrant lattices that a coarse pixel grid can't represent, so the "Min Poisson" goal searches for the lowest value it can find and reports the real number. It is usually still positive.</p>
+</div>
+
 </div>
 
 <div class="right">
@@ -278,6 +315,22 @@ const results=document.getElementById("results");
 vf.oninput=()=>{document.getElementById("vfLabel").textContent=(+vf.value).toFixed(2);};
 eff.oninput=()=>{document.getElementById("effLabel").textContent=eff.value;};
 
+let GOAL="stiff", SYM="mirror";
+document.getElementById("goal").onclick=e=>{
+  if(e.target.dataset.g){
+    [...document.getElementById("goal").children].forEach(b=>b.classList.remove("on"));
+    e.target.classList.add("on");
+    GOAL=e.target.dataset.g;
+  }
+};
+document.getElementById("sym").onclick=e=>{
+  if(e.target.dataset.s){
+    [...document.getElementById("sym").children].forEach(b=>b.classList.remove("on"));
+    e.target.classList.add("on");
+    SYM=e.target.dataset.s;
+  }
+};
+
 function drawCell(canvas,a){
   const tile=2;
   canvas.width=N*tile; canvas.height=N*tile;
@@ -293,21 +346,19 @@ function drawCell(canvas,a){
 
 go.onclick=async()=>{
   const vfT=+vf.value, effort=+eff.value;
-  const goal=document.querySelector('input[name="goal"]:checked').value;
-  const sym=document.querySelector('input[name="sym"]:checked').value;
   go.disabled=true; results.innerHTML="";
   const seedBase=(Math.random()*1e9)|0;
   let pool=[];
   for(let i=0;i<effort;i++){
     status.textContent="Generating and evaluating… "+(i+1)+"/"+effort;
-    const a=genCandidate(vfT,sym,seedBase+i*131+7);
+    const a=genCandidate(vfT,SYM,seedBase+i*131+7);
     const m=evaluate(a);
-    pool.push({a,m,s:score(m,vfT,goal)});
+    pool.push({a,m,s:score(m,vfT,GOAL)});
     if(i%4===0) await new Promise(r=>setTimeout(r,0));
   }
   pool.sort((p,q)=>q.s-p.s);
   const top=pool.slice(0,8);
-  status.textContent="Done. Showing the 8 best of "+effort+" candidates for target vf "+vfT.toFixed(2)+", goal \""+goalName(goal)+"\".";
+  status.textContent="Done. Showing the 8 best of "+effort+" candidates for target vf "+vfT.toFixed(2)+", goal \""+goalName(GOAL)+"\".";
   const grid=document.createElement("div");
   grid.className="grid";
   top.forEach((p,i)=>{

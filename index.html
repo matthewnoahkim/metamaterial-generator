@@ -4,55 +4,93 @@
 <meta charset="utf-8">
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.1/dist/ort.min.js"></script>
 <style>
+body{margin:16px;font-family:Georgia,"Times New Roman",Times,serif;font-size:20px;background:#fff;color:#000}
+nav a{color:#000;margin-right:12px}
+nav a.active{text-decoration:none}
+nav a:not(.active){text-decoration:underline}
+h1{font-size:2em;font-weight:bold;margin:16px 0}
+hr{border:none;border-top:1px solid #ccc;margin:16px 0}
+.main{display:flex;align-items:flex-start;gap:24px}
+.left{flex:1;min-width:0}
+.right{flex:2;min-width:0}
+.ctrl{margin:16px 0}
+.ctrl label{display:block;margin-bottom:4px}
+input[type=range]{width:100%;max-width:320px;display:block;margin-top:4px;accent-color:#000;color:#000}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;background:#000;border:1px solid #000;border-radius:50%;cursor:pointer}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;background:#000;border:1px solid #000;border-radius:50%;cursor:pointer}
+input[type=range]::-moz-range-progress{background:#000}
+input[type=range]::-moz-range-track{background:#ccc}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{padding:4px 12px;border:1px solid #999;background:#fff;font-family:inherit;font-size:17px;cursor:pointer}
+.seg button.on{background:#000;color:#fff;border-color:#000}
+#go{display:block;width:100%;max-width:320px;padding:6px;margin:16px 0;font-family:inherit;font-size:inherit;border:1px solid #000;background:#fff;cursor:pointer}
+#go:disabled{opacity:.55;cursor:default}
+#status{margin:0 0 12px}
+.howitworks{margin-top:56px;font-size:14px;line-height:1.45;color:#333;max-width:320px}
+.howitworks h3{font-size:14px;font-weight:bold;margin:0 0 6px}
+.howitworks p{margin:0 0 8px}
 canvas{image-rendering:pixelated;border:1px solid #000}
-.main{display:flex;align-items:flex-start}
-.left,.right{width:50%;box-sizing:border-box;padding:0 16px;vertical-align:top}
-.left{border-right:1px solid #000;padding-right:20px}
-.right{padding-left:20px}
-#status{font-weight:bold;margin:0 0 12px}
 #results .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-#results .cell{border:1px solid #000;padding:6px;text-align:center;font-size:11px;line-height:1.4}
+#results .cell{border:1px solid #000;padding:6px;text-align:center;font-size:15px;line-height:1.4}
 #results .cell.best{border:2px solid #000}
 #results .cell canvas{width:100%;max-width:110px;height:auto;display:block;margin:0 auto 6px}
-@media(max-width:760px){.main{flex-direction:column}.left,.right{width:100%;border:none;padding:0 16px}}
+@media(max-width:760px){.main{flex-direction:column}}
 </style>
 </head>
 <body>
 
-<center>
-<h1><b>METAMATERIAL GENERATOR</b></h1>
-</center>
+<nav>
+  <a class="active" href=".">Diffusion</a>
+  <a href="procedural/">Procedural</a>
+</nav>
 
-<p align="center"><span style="background-color:#FFFF00">You are on the diffusion model page</span></p>
-<p align="center"><span style="background-color:#FFFF00">Click <a href="procedural/">HERE</a> for the procedural generator</span></p>
+<h1>Diffusion model</h1>
 
 <hr>
 
 <div class="main">
 <div class="left">
-<h2>Diffusion Model</h2>
 
-<p><b>Target volume fraction:</b> <span id="vfL">0.45</span><br>
-<input type="range" id="vf" min="0.37" max="0.57" step="0.01" value="0.45" style="width:90%"></p>
+<div class="ctrl">
+<label>Target volume fraction</label>
+<span id="vfL">0.45</span>
+<input type="range" id="vf" min="0.37" max="0.57" step="0.01" value="0.45">
+</div>
 
-<p><b>Stiffness class:</b><br>
-<input type="radio" name="stiff" value="0"> Low<br>
-<input type="radio" name="stiff" value="1"> Medium<br>
-<input type="radio" name="stiff" value="2" checked> High</p>
+<div class="ctrl">
+<label>Stiffness class</label>
+<div class="seg" id="stiff">
+  <button type="button" data-i="0">Low</button>
+  <button type="button" data-i="1">Medium</button>
+  <button type="button" data-i="2" class="on">High</button>
+</div>
+</div>
 
-<p><b>Symmetry:</b><br>
-<input type="checkbox" id="symT"> Enforce biaxial symmetry</p>
+<div class="ctrl">
+<label>Symmetry</label>
+<div class="seg"><button type="button" id="symT">Enforce biaxial</button></div>
+</div>
 
-<p><b>Guidance:</b> <span id="guidL">3.0</span><br>
-<input type="range" id="guid" min="1" max="5" step="0.5" value="3" style="width:90%"></p>
+<div class="ctrl">
+<label>Guidance</label>
+<span id="guidL">3.0</span>
+<input type="range" id="guid" min="1" max="5" step="0.5" value="3">
+</div>
 
-<p><b>Denoising steps:</b> <span id="stepsL">40</span><br>
-<input type="range" id="steps" min="20" max="60" step="10" value="40" style="width:90%"></p>
+<div class="ctrl">
+<label>Denoising steps</label>
+<span id="stepsL">40</span>
+<input type="range" id="steps" min="20" max="60" step="10" value="40">
+</div>
 
-<p><input type="button" id="go" value="Generate"></p>
+<button type="button" id="go">Generate</button>
 
+<div class="howitworks">
+<h3>How it works</h3>
 <p>The ONNX graph is the denoiser; the DDIM loop, classifier-free guidance, and the evaluator all run in JavaScript.</p>
 <p>Volume-fraction control is calibrated and reliable in roughly 0.37–0.57. Stiffness conditioning separates low vs high by about 2&times;.</p>
+</div>
+
 </div>
 
 <div class="right">
@@ -361,6 +399,19 @@ vf.oninput=()=>{document.getElementById("vfL").textContent=(+vf.value).toFixed(2
 guid.oninput=()=>{document.getElementById("guidL").textContent=(+guid.value).toFixed(1);};
 steps.oninput=()=>{document.getElementById("stepsL").textContent=steps.value;};
 
+let STIFF=2, SYM=false;
+document.getElementById("stiff").onclick=e=>{
+  if(e.target.dataset.i!==undefined){
+    [...document.getElementById("stiff").children].forEach(b=>b.classList.remove("on"));
+    e.target.classList.add("on");
+    STIFF=+e.target.dataset.i;
+  }
+};
+document.getElementById("symT").onclick=()=>{
+  SYM=!SYM;
+  document.getElementById("symT").classList.toggle("on",SYM);
+};
+
 function drawCell(canvas,a,n){
   const tile=2;
   canvas.width=n*tile;canvas.height=n*tile;
@@ -381,8 +432,6 @@ go.onclick=async()=>{
   }
   go.disabled=true; results.innerHTML="";
   const targetVF=+vf.value;
-  const STIFF=+document.querySelector('input[name="stiff"]:checked').value;
-  const SYM=document.getElementById("symT").checked;
   const req=vfRequestFor(targetVF);
   const guidance=+guid.value, nSteps=+steps.value, n=8;
   const stiffName=["low","medium","high"][STIFF];
