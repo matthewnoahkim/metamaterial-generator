@@ -72,6 +72,12 @@ canvas{image-rendering:pixelated;border:1px solid #000}
 </div>
 
 <div class="ctrl">
+<label>Target Poisson's ratio &nu;</label>
+<span id="nuL">+0.30 (standard)</span>
+<input type="range" id="nuT" min="-0.8" max="0.3" step="0.05" value="0.3">
+</div>
+
+<div class="ctrl">
 <label>Guidance</label>
 <span id="guidL">3.0</span>
 <input type="range" id="guid" min="1" max="5" step="0.5" value="3">
@@ -89,6 +95,7 @@ canvas{image-rendering:pixelated;border:1px solid #000}
 <h3>How it works</h3>
 <p>The ONNX graph is the denoiser; the DDIM loop, classifier-free guidance, and the evaluator all run in JavaScript.</p>
 <p>Volume-fraction control is calibrated and reliable in roughly 0.37–0.57. Stiffness conditioning separates low vs high by about 2&times;.</p>
+<p><b>Auxetic targets (&nu; &lt; 0):</b> routed to a second DDPM — a specialist trained on 2,000 FEM-labeled rotating-squares cells, conditioned on [vf,&nbsp;&nu;]. It samples a double batch and ranks by the measured &nu; (the mixed model cannot switch geometry family from a conditioning channel — four retraining attempts confirmed this). In auxetic mode vf control is approximate. Every number shown is homogenized from the generated cell, never assumed.</p>
 </div>
 
 </div>
@@ -316,12 +323,20 @@ function vfRequestFor(targetAchieved){
 }
 function achievableRange(){return [CAL_ACH[0],CAL_ACH[CAL_ACH.length-1]];}
 
-// ===================== onnxruntime session =====================
-let SESSION=null, BACKEND="";
-async function loadModel(){
+// ===================== onnxruntime sessions =====================
+// two models: the v2 mixed model (cond = [vf, stiffness one-hot], 4 dims) and
+// the auxetic specialist (cond = [vf, nu], 2 dims), loaded lazily on demand
+const MODELS={
+  std:{file:"./model/ddpm2_ep25.onnx", condDim:4, session:null},
+  aux:{file:"./model/ddpm_aux_ep120.onnx", condDim:2, session:null},
+};
+let BACKEND="";
+async function loadModel(which){
+  const m=MODELS[which];
+  if(m.session) return BACKEND;
   ort.env.wasm.numThreads=1;
   const tryEP=async(eps)=>{
-    SESSION=await ort.InferenceSession.create("./model/ddpm2_ep25.onnx",{executionProviders:eps});
+    m.session=await ort.InferenceSession.create(m.file,{executionProviders:eps});
     BACKEND=eps[0];
   };
   try{ await tryEP(["webgpu"]); }
@@ -339,12 +354,13 @@ function randn(n){ // Box-Muller
   return out;
 }
 
-// run the DDIM loop for a batch of n cells with one condition
-async function sampleBatch(n,vfReq,stiffIdx,guidance,steps,onProg){
+// run the DDIM loop for a batch of n cells with one condition vector
+async function sampleBatch(which,n,condVec,guidance,steps,onProg){
+  const {session,condDim}=MODELS[which];
   const px=IMGD*IMGD;
   let x=randn(n*px);
-  const cond=new Float32Array(n*4);
-  for(let i=0;i<n;i++){cond[i*4]=vfReq;cond[i*4+1+stiffIdx]=1;}
+  const cond=new Float32Array(n*condDim);
+  for(let i=0;i<n;i++)for(let k=0;k<condDim;k++)cond[i*condDim+k]=condVec[k];
   const ts=Array.from({length:steps},(_,i)=>Math.trunc((T_STEPS-1)*(1-i/(steps-1))));
   for(let s=0;s<steps;s++){
     const t=ts[s];
@@ -352,9 +368,9 @@ async function sampleBatch(n,vfReq,stiffIdx,guidance,steps,onProg){
     const feeds={
       x:new ort.Tensor("float32",x,[n,1,IMGD,IMGD]),
       t:new ort.Tensor("int64",tArr,[n]),
-      cond:new ort.Tensor("float32",cond,[n,4])
+      cond:new ort.Tensor("float32",cond,[n,condDim])
     };
-    const out=await SESSION.run(feeds);
+    const out=await session.run(feeds);
     const ec=out.eps_c.data, eu=out.eps_u.data;
     const a=abar[t], sa=Math.sqrt(a), s1=Math.sqrt(1-a);
     const last=s===steps-1, aP=last?0:abar[ts[s+1]];
@@ -377,12 +393,13 @@ async function sampleBatch(n,vfReq,stiffIdx,guidance,steps,onProg){
 }
 
 // ===================== evaluate a 32x32 cell =====================
+// homogenized at NATIVE 32x32 (the old 32->24 downsample distorted thin
+// features such as the auxetic family's corner hinges)
 function evaluateCell(a){
   const con=components(a,IMGD);
   const connected=con.percX&&con.percY;
-  const small=downsample(a,IMGD,M);
   let phys={Ex:0,Ey:0,nu:0,G:0};
-  if(con.solid>4) phys=homogenize(small,M);
+  if(con.solid>4) phys=homogenize(a,IMGD);
   return {vf:volumeFraction(a),comps:con.count,connected,
           sym:symmetryScore(a,IMGD),E:Math.max(0,0.5*(phys.Ex+phys.Ey)),nu:phys.nu};
 }
@@ -400,6 +417,14 @@ guid.oninput=()=>{document.getElementById("guidL").textContent=(+guid.value).toF
 steps.oninput=()=>{document.getElementById("stepsL").textContent=steps.value;};
 
 let STIFF=2, SYM=false;
+const nuT=document.getElementById("nuT");
+function nuTarget(){return +nuT.value;}
+function auxMode(){return nuTarget()<-0.05;}
+nuT.oninput=()=>{
+  const v=nuTarget();
+  document.getElementById("nuL").textContent=
+    (v>=0?"+":"")+v.toFixed(2)+(auxMode()?" (auxetic model)":" (standard)");
+};
 document.getElementById("stiff").onclick=e=>{
   if(e.target.dataset.i!==undefined){
     [...document.getElementById("stiff").children].forEach(b=>b.classList.remove("on"));
@@ -425,18 +450,31 @@ function drawCell(canvas,a,n){
 }
 
 go.onclick=async()=>{
-  if(!SESSION){
-    status.textContent="Loading model…";
-    try{ const be=await loadModel(); status.textContent="Model loaded ("+be+" backend)."; }
+  const isAux=auxMode(), which=isAux?"aux":"std";
+  if(!MODELS[which].session){
+    status.textContent="Loading "+(isAux?"auxetic specialist":"standard")+" model…";
+    try{ const be=await loadModel(which); status.textContent="Model loaded ("+be+" backend)."; }
     catch(e){ status.textContent="Failed to load model. Run from a local web server so the .onnx file can be fetched. Error: "+e.message; return; }
   }
   go.disabled=true; results.innerHTML="";
-  const targetVF=+vf.value;
-  const req=vfRequestFor(targetVF);
-  const guidance=+guid.value, nSteps=+steps.value, n=8;
+  const targetVF=+vf.value, targetNu=nuTarget();
+  const guidance=+guid.value, nSteps=+steps.value, n=isAux?16:8;
   const stiffName=["low","medium","high"][STIFF];
-  status.textContent="Sampling "+n+" cells (target vf "+targetVF.toFixed(2)+", stiffness "+stiffName+")…";
-  let cells=await sampleBatch(n,req,STIFF,guidance,nSteps,p=>{
+  // request mapping: standard model uses the measured vf calibration map; the
+  // aux specialist's nu response lives in the tail, so ask deeper than target
+  let condVec;
+  if(isAux){
+    // measured (ep120): every request depth yields ~50-60% auxetic cells with
+    // the tail deepening as requested, so pass the target through (clamped)
+    // and let the measurement ranking pick the closest cells
+    const nuReq=Math.min(-0.2,Math.max(-1.0,targetNu));
+    condVec=[targetVF,nuReq];
+  }else{
+    const c=[vfRequestFor(targetVF),0,0,0]; c[1+STIFF]=1; condVec=c;
+  }
+  status.textContent="Sampling "+n+" cells (target vf "+targetVF.toFixed(2)+
+    (isAux?", target ν "+targetNu.toFixed(2)+", auxetic model":", stiffness "+stiffName)+")…";
+  let cells=await sampleBatch(which,n,condVec,guidance,nSteps,p=>{
     status.textContent="Denoising… "+Math.round(p*100)+"%";
   });
   if(SYM){
@@ -453,10 +491,17 @@ go.onclick=async()=>{
   status.textContent="Evaluating with in-browser homogenization…";
   const scored=cells.map(a=>({a,m:evaluateCell(a)}));
   scored.sort((p,q)=>{
-    const sc=m=>(m.connected?1:0)*1 - Math.abs(m.vf-targetVF) + (STIFF===2?m.E:STIFF===0?-m.E:0)*0.5;
+    const sc=m=>(m.connected?1:0)*1 - Math.abs(m.vf-targetVF) +
+      (isAux? -Math.abs(m.nu-targetNu)*2.0 : (STIFF===2?m.E:STIFF===0?-m.E:0)*0.5);
     return sc(q.m)-sc(p.m);
   });
-  status.textContent="Done. "+scored.filter(s=>s.m.connected).length+"/"+n+" connected.";
+  let done="Done. "+scored.filter(s=>s.m.connected).length+"/"+n+" connected.";
+  if(isAux){
+    const minNu=Math.min(...scored.map(s=>s.m.nu));
+    const nAux=scored.filter(s=>s.m.nu<-0.01).length;
+    done+=" Lowest measured ν "+minNu.toFixed(3)+", "+nAux+"/"+n+" auxetic; ranked by measured ν vs target "+targetNu.toFixed(2)+".";
+  }
+  status.textContent=done;
   const grid=document.createElement("div");
   grid.className="grid";
   scored.forEach((p,i)=>{
@@ -470,7 +515,8 @@ go.onclick=async()=>{
     cap.innerHTML=(i===0?"<b>best match</b><br>":"")+
       "vf "+m.vf.toFixed(3)+" / "+targetVF.toFixed(2)+"<br>"+
       "connected "+(m.connected?"yes":"no")+", "+m.comps+" pieces<br>"+
-      "E "+m.E.toFixed(3)+", nu "+m.nu.toFixed(3)+(m.nu<0?" auxetic":"");
+      "E "+m.E.toFixed(3)+", nu "+m.nu.toFixed(3)+
+      (isAux?" / "+targetNu.toFixed(2):"")+(m.nu<0?" auxetic":"");
     cell.appendChild(cap);
     grid.appendChild(cell);
   });

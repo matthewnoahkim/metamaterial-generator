@@ -310,8 +310,6 @@ def compute_metrics(solid, do_fem=True, min_feature_px=3, nu0=0.3):
     return out
 
 
-# canonical property vector: the SAME quantities that label the training data
-# and condition the generator, so achieved-vs-target error is well defined.
 PROPERTY_KEYS = ["volume_fraction", "E_eff_x_rel", "E_eff_y_rel",
                  "poisson_eff", "K_eff_rel", "G_eff_rel"]
 
@@ -333,8 +331,6 @@ def evaluate_against_target(metrics, target):
             continue
         av = float(metrics[k])
         abs_e = abs(av - float(tv))
-        # normalize by the larger magnitude so targets near 0 (e.g. Poisson)
-        # do not blow up the relative error
         denom = max(abs(float(tv)), abs(av), 1e-6)
         rel_e = abs_e / denom
         errs[k] = {"target": float(tv), "achieved": round(av, 5),
@@ -394,7 +390,7 @@ def main():
             m = compute_metrics(load_binary(os.path.join(args.path, f)),
                                 do_fem, args.min_feature, args.nu0)
             m = {"filename": f, **m}
-            m.pop("CH", None)            # keep the CSV flat
+            m.pop("CH", None)
             rows.append(m)
         out = args.out or os.path.join(args.path, "metrics.csv")
         with open(out, "w", newline="") as fh:
