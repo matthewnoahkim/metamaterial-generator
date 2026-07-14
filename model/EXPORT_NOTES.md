@@ -1,3 +1,44 @@
+# ONNX Export: ddpm_aux_ep120.onnx (auxetic specialist, vf + nu conditioning, EMA)
+
+Dedicated auxetic DDPM trained on 2,000 rotating-squares cells (rigid squares
+joined by corner hinges, drawn native at 32x32, FEM-labeled by the Stage-3
+homogenizer; 63% measured auxetic, nu down to ~-1.0). Same U-Net backbone as
+v2. EMA weights from epoch 120 of 240, selected by a controllability probe:
+nu conditioning PEAKS at ep120 (67% auxetic at request -0.8, best-of-batch to
+-1.7) and decays with further training (12% by ep240) - same
+conditioning-vs-overtraining tradeoff v2 hit.
+
+## Why a separate model
+Four attempts to add auxetic control to the mixed 10,040-cell model failed:
+warm-started scalar-nu channel, from-scratch scalar-nu, TopoDiff-style spatial
+cond planes, and an auxetic-class one-hot. The small mixed model's global
+conditioning biases statistics (vf, ~2x stiffness) but cannot switch geometry
+FAMILY. Within the homogeneous rotating-squares family, conditioning is a
+smooth geometry mapping and works. A v2-replica retrain in this environment
+reproduced the shipped v2 vf response (0.366/0.444/0.533 for requests
+0.2/0.45/0.7), ruling out environment/code differences.
+
+## Graph interface
+- Inputs:  x [b,1,32,32] f32, t [b] int64, cond [b,2] f32 = [vf, nu]
+- Outputs: eps_c, eps_u. Browser CFG: eps = eps_u + w*(eps_c - eps_u), w = 3.
+- Scheduler identical to v2 (DDIM, betas linspace(1e-4, 0.02, 400)).
+
+## Verification
+- Per-step parity vs PyTorch: 4.7e-6 (cond) / 5.2e-6 (uncond).
+- Full 50-step DDIM loop (numpy scheduler + ONNX vs PyTorch, matched CPU RNG):
+  mean IoU 1.0000.
+
+## Measured behaviour (ep120, guidance 3, request vf 0.47, n=32)
+- request nu -0.2 .. -1.0: 50-62% of cells measure nu < -0.01; median -0.02 to
+  -0.15; best-of-batch typically -0.3 .. -0.8 (occasionally beyond -1).
+- The browser passes the target nu through (clamped to [-1.0, -0.2]) and ranks
+  the batch by measured nu vs target: best cell usually within 0.1-0.2 of
+  targets down to about -0.6.
+- vf control is WEAK in this model: generated vf ~0.55 +/- 0.04 regardless of
+  request. The demo says so; rank-by-measurement still applies.
+- Inference time (measured, 50 DDIM steps, batch 1): 0.38 s on an RTX 5060
+  laptop GPU, 0.52 s CPU (PyTorch 2.11). Replaces the old ~4 s estimate.
+
 # ONNX Export v2: ddpm2_ep25.onnx (vf + stiffness conditioning, EMA)
 
 Re-export after retraining on 8,040 cells with two-property conditioning and EMA.

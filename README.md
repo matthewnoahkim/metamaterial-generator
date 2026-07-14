@@ -62,36 +62,71 @@ unavailable it falls back to WASM, which is slower but works.
   range. The calibration map is in `model/EXPORT_NOTES.md`.
 - **Stiffness class (low/medium/high):** the model separates low vs high
   effective modulus by about **2×** at a fixed volume fraction.
-- **Auxetic:** there is **no** auxetic control. The training data has essentially
-  no negative-Poisson cells, so ν is measured and displayed but cannot be
-  targeted. Genuine auxetic design needs finer re-entrant geometry or real
-  topology-optimization data.
+- **Auxetic (target ν):** the diffusion page has a target-ν slider. Negative
+  targets are routed to a **second, retrained DDPM** — an auxetic specialist
+  trained on 2,000 FEM-labeled rotating-squares cells (rigid squares joined by
+  corner hinges), conditioned on [vf, ν]. A batch typically comes out ~50–60%
+  measured-auxetic and the page ranks by homogenized ν against the target
+  (best-of-batch usually lands within ~0.1–0.2 of targets down to ≈ −0.6;
+  single cells as deep as ν ≈ −1 appear). Honest limits: in auxetic mode vf
+  control is approximate (generated vf ≈ 0.55 ± 0.04), and the ν slider steers
+  the *distribution*, with final numbers always measured, never assumed.
+  - *Why a second model:* four retraining attempts (warm-started scalar-ν
+    channel, from-scratch scalar-ν, TopoDiff-style spatial condition planes,
+    and an auxetic-class one-hot) showed the small mixed model cannot switch
+    geometry *family* from a conditioning channel — the channel only biases
+    statistics. Within one family, conditioning is a smooth geometry mapping
+    and works. Conditioning strength also **peaks mid-training and then
+    decays** (the specialist peaked at epoch 120 of 240), so the checkpoint is
+    selected by a controllability probe, not by loss — same lesson as v2.
+  - *Procedural page — "Auxetic (target ν)":* the parametric rotating-squares
+    family with exact vf control; measured ν down to about **−0.65**, most
+    reliable at vf **0.40–0.55**. The dataset's original "reentrant" bowtie
+    family, by contrast, measures ν ≈ +0.23 — auxetic-like by label only.
 - Stiffness and Poisson are computed at 24×24 with a softened void for speed, so
   they are close approximations of the full-resolution solver, not exact.
 
-## Model
+## Models
 
-- `model/ddpm2_ep25.onnx` — 8 MB, opset 17. Small U-Net (~2M params), 32×32.
-- Inputs: `x [b,1,32,32]` float32, `t [b]` int64, `cond [b,4]` float32 where
-  `cond = [volume_fraction, stiff_low, stiff_med, stiff_high]`.
-- Outputs: `eps_c`, `eps_u` (conditional and unconditional noise). The browser
-  does classifier-free guidance: `eps = eps_u + w·(eps_c − eps_u)`, default w = 3.
-- Trained on 8,040 synthetic cells, EMA weights, checkpoint selected by
-  controllability (not loss). Details in `model/EXPORT_NOTES.md`.
+Two DDPMs with the same U-Net backbone (~2M params, 32×32, opset 17, 8 MB each),
+routed by the target ν:
+
+- `model/ddpm2_ep25.onnx` — the standard model. `cond [b,4] =
+  [volume_fraction, stiff_low, stiff_med, stiff_high]`. Trained on 8,040
+  synthetic cells; EMA weights; epoch chosen by controllability.
+- `model/ddpm_aux_ep120.onnx` — the auxetic specialist. `cond [b,2] =
+  [volume_fraction, nu]`. Trained on 2,000 rotating-squares cells labeled by
+  the same homogenizer (59–63% measured auxetic, ν down to ≈ −1); EMA
+  weights; epoch 120 of 240 chosen by a controllability probe (ν conditioning
+  peaks there and decays with further training). Measured inference: 0.38 s
+  per design (RTX 5060 laptop GPU, PyTorch, 50 DDIM steps), 0.52 s on CPU.
+- Both graphs: inputs `x [b,1,32,32]` f32, `t [b]` int64, `cond` f32; outputs
+  `eps_c`, `eps_u`. The browser does classifier-free guidance
+  `eps = eps_u + w·(eps_c − eps_u)`, default w = 3. Both exports verified
+  bit-consistent with PyTorch (per-step ~3–5e-6; full 50-step loop IoU 1.0000
+  with matched RNG). Details in `model/EXPORT_NOTES.md`.
+- The in-browser evaluator now homogenizes at the native 32×32 grid (the old
+  32→24 downsample distorted thin features such as the specialist's hinges).
 
 ## Repository layout
 
 ```
-index.html              in-browser diffusion app (loads the ONNX model)
+index.html              in-browser diffusion app (loads the ONNX models)
 procedural/index.html   procedural generator + same evaluator (no download)
 model/
-  ddpm2_ep25.onnx       trained diffusion model
-  EXPORT_NOTES.md       interface, calibration map, measured controllability
+  ddpm2_ep25.onnx       standard diffusion model (vf + stiffness)
+  ddpm_aux_ep120.onnx   auxetic specialist (vf + nu, rotating-squares family)
+  EXPORT_NOTES.md       interfaces, calibration maps, measured controllability
 scripts/
   generate_unitcells.py dataset generator
   metrics.py            evaluator (homogenization) used to label/score
   ddpm2.py              model definition + training (PyTorch)
 ```
+
+Training code for the auxetic specialist (dataset generator, trainer, probes,
+ONNX export) lives in the `Diffusion Model Extension` stage folder:
+`make_auxetic_dataset.py`, `ddpm_aux.py`, `export_onnx_aux.py`, and `ddpm3.py`
+(the documented record of the failed mixed-model conditioning attempts).
 
 ## How it works
 

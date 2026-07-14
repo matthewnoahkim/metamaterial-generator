@@ -61,9 +61,15 @@ canvas{image-rendering:pixelated;border:1px solid #000}
 <div class="seg" id="goal">
   <button type="button" data-g="stiff" class="on">Max stiffness</button>
   <button type="button" data-g="soft">Min stiffness</button>
-  <button type="button" data-g="auxetic">Min Poisson</button>
+  <button type="button" data-g="auxetic">Auxetic (target &nu;)</button>
   <button type="button" data-g="any">Match vf only</button>
 </div>
+</div>
+
+<div class="ctrl" id="nuCtrl" style="display:none">
+<label>Target Poisson's ratio</label>
+<span id="nuLabel">-0.30</span>
+<input type="range" id="nuT" min="-0.7" max="0.3" step="0.05" value="-0.3">
 </div>
 
 <div class="ctrl">
@@ -86,7 +92,7 @@ canvas{image-rendering:pixelated;border:1px solid #000}
 <div class="howitworks">
 <h3>How it works</h3>
 <p>Candidates come from a stochastic generator (smoothed Gaussian-random-field topologies plus strut/lattice motifs), optionally folded to enforce symmetry. Each is scored by the same homogenization algorithm used to label the project dataset, ported to JavaScript and validated against the Python solver.</p>
-<p><b>Auxetic note:</b> Negative Poisson's ratio needs slender, well-proportioned re-entrant lattices that a coarse pixel grid can't represent, so the "Min Poisson" goal searches for the lowest value it can find and reports the real number. It is usually still positive.</p>
+<p><b>Auxetic note:</b> The "Auxetic" goal mixes in a rotating-squares family (rigid squares joined by small corner hinges) drawn directly on the evaluator's 24&times;24 grid, so the displayed cell is exactly what the physics sees. Measured &nu; reaches about &minus;0.65, most reliably at volume fraction 0.40&ndash;0.55; the number shown is always the homogenized value, not the target. The symmetry setting does not apply to this family (the rotation pattern would be destroyed by mirror folding).</p>
 </div>
 
 </div>
@@ -286,6 +292,61 @@ function genCandidate(vf,sym,seed){
   f=symmetrize(f,N,sym);
   return thresholdToVF(f,N,vf);
 }
+
+// ---------- auxetic family: rotating squares with corner hinges ----------
+// Drawn native on the m x m evaluation grid (m = M = 24) and upsampled x2 for
+// display, so the cell the homogenizer sees is exactly the cell shown. Four
+// rigid squares per cell, alternately rotated +/-alpha, tied by small hinge
+// disks at the lattice-edge midpoints; the hinge flexure is what produces
+// negative Poisson's ratio. Validated nu down to ~-0.65 at vf 0.40-0.55.
+function drawRotSquares(m,alpha,sFrac,hingeR){
+  const h=m/2, s=h*sFrac/2;
+  const squares=[];
+  for(let i=0;i<2;i++)for(let j=0;j<2;j++)
+    squares.push([h/2+i*h, h/2+j*h, ((i+j)%2? -alpha: alpha)]);
+  const pts=[[h,h/2],[h/2,h],[0,h/2],[h/2,0],[h,3*h/2],[3*h/2,h],[3*h/2,0],[0,3*h/2]];
+  const a=new Uint8Array(m*m);
+  for(let y=0;y<m;y++)for(let x=0;x<m;x++){
+    const px=x+0.5, py=y+0.5;
+    let solid=false;
+    outer:
+    for(const [cx,cy,rot] of squares){
+      for(let ox=-m;ox<=m;ox+=m)for(let oy=-m;oy<=m;oy+=m){
+        const dx=px-(cx+ox), dy=py-(cy+oy);
+        const u=Math.cos(rot)*dx+Math.sin(rot)*dy;
+        const v=-Math.sin(rot)*dx+Math.cos(rot)*dy;
+        if(Math.max(Math.abs(u),Math.abs(v))<=s){solid=true;break outer;}
+      }
+    }
+    if(!solid){
+      outer2:
+      for(const [hx,hy] of pts){
+        for(let ox=-m;ox<=m;ox+=m)for(let oy=-m;oy<=m;oy+=m){
+          if(Math.hypot(px-(hx+ox),py-(hy+oy))<=hingeR){solid=true;break outer2;}
+        }
+      }
+    }
+    a[y*m+x]=solid?1:0;
+  }
+  return a;
+}
+function upsample2(a,m){
+  const n=2*m, out=new Uint8Array(n*n);
+  for(let y=0;y<n;y++)for(let x=0;x<n;x++) out[y*n+x]=a[(y>>1)*m+(x>>1)];
+  return out;
+}
+function genAuxeticCandidate(vf,seed){
+  const rnd=mulberry32(seed);
+  const alpha=0.25+0.37*rnd();
+  const hingeR=1.2+0.6*rnd();
+  // bisect square size so the cell hits the target volume fraction
+  let lo=0.3, hi=1.4;
+  for(let i=0;i<16;i++){
+    const mid=(lo+hi)/2;
+    if(volumeFraction(drawRotSquares(M,alpha,mid,hingeR))<vf) lo=mid; else hi=mid;
+  }
+  return upsample2(drawRotSquares(M,alpha,(lo+hi)/2,hingeR),M);
+}
 function evaluate(a){
   const con=components(a,N);
   const connected=con.percX&&con.percY;
@@ -296,16 +357,16 @@ function evaluate(a){
   return {vf:volumeFraction(a),comps:con.count,connected,
           sym:symmetryScore(a,N),E:Math.max(0,E),nu:phys.nu};
 }
-function score(m,vfT,goal){
+function score(m,vfT,goal,nuT){
   let s=-Math.abs(m.vf-vfT)*4;
   if(!m.connected) s-=1.0;
   s-=Math.max(0,m.comps-1)*0.05;
   if(goal==="stiff") s+=m.E*2.0;
   else if(goal==="soft") s-=m.E*2.0;
-  else if(goal==="auxetic") s-=m.nu*1.5;
+  else if(goal==="auxetic") s-=Math.abs(m.nu-nuT)*3.0;
   return s;
 }
-function goalName(g){return {stiff:"max stiffness",soft:"min stiffness",auxetic:"min Poisson",any:"match vf only"}[g];}
+function goalName(g){return {stiff:"max stiffness",soft:"min stiffness",auxetic:"auxetic (target ν)",any:"match vf only"}[g];}
 
 const vf=document.getElementById("vf");
 const eff=document.getElementById("eff");
@@ -317,11 +378,14 @@ vf.oninput=()=>{document.getElementById("vfLabel").textContent=(+vf.value).toFix
 eff.oninput=()=>{document.getElementById("effLabel").textContent=eff.value;};
 
 let GOAL="stiff", SYM="mirror";
+const nuT=document.getElementById("nuT");
+nuT.oninput=()=>{document.getElementById("nuLabel").textContent=(+nuT.value).toFixed(2);};
 document.getElementById("goal").onclick=e=>{
   if(e.target.dataset.g){
     [...document.getElementById("goal").children].forEach(b=>b.classList.remove("on"));
     e.target.classList.add("on");
     GOAL=e.target.dataset.g;
+    document.getElementById("nuCtrl").style.display= GOAL==="auxetic" ? "" : "none";
   }
 };
 document.getElementById("sym").onclick=e=>{
@@ -346,20 +410,24 @@ function drawCell(canvas,a){
 }
 
 go.onclick=async()=>{
-  const vfT=+vf.value, effort=+eff.value;
+  const vfT=+vf.value, effort=+eff.value, nuTarget=+nuT.value;
   go.disabled=true; results.innerHTML="";
   const seedBase=(Math.random()*1e9)|0;
   let pool=[];
   for(let i=0;i<effort;i++){
     status.textContent="Generating and evaluating… "+(i+1)+"/"+effort;
-    const a=genCandidate(vfT,SYM,seedBase+i*131+7);
+    // auxetic goal: 3 of every 5 candidates come from the rotating-squares family
+    const a=(GOAL==="auxetic" && i%5<3)
+      ? genAuxeticCandidate(vfT,seedBase+i*131+7)
+      : genCandidate(vfT,SYM,seedBase+i*131+7);
     const m=evaluate(a);
-    pool.push({a,m,s:score(m,vfT,GOAL)});
+    pool.push({a,m,s:score(m,vfT,GOAL,nuTarget)});
     if(i%4===0) await new Promise(r=>setTimeout(r,0));
   }
   pool.sort((p,q)=>q.s-p.s);
   const top=pool.slice(0,8);
-  status.textContent="Done. Showing the 8 best of "+effort+" candidates for target vf "+vfT.toFixed(2)+", goal \""+goalName(GOAL)+"\".";
+  status.textContent="Done. Showing the 8 best of "+effort+" candidates for target vf "+vfT.toFixed(2)+", goal \""+goalName(GOAL)+"\""+
+    (GOAL==="auxetic"?" (target ν "+nuTarget.toFixed(2)+"; "+pool.filter(p=>p.m.nu<-0.01).length+"/"+effort+" measured auxetic)":"")+".";
   const grid=document.createElement("div");
   grid.className="grid";
   top.forEach((p,i)=>{
@@ -374,7 +442,8 @@ go.onclick=async()=>{
       "vf "+m.vf.toFixed(3)+" / "+vfT.toFixed(2)+"<br>"+
       "connected "+(m.connected?"yes":"no")+", "+m.comps+" pieces<br>"+
       "sym "+m.sym.toFixed(2)+"<br>"+
-      "E "+m.E.toFixed(3)+", nu "+m.nu.toFixed(3)+(m.nu<0?" auxetic":"");
+      "E "+m.E.toFixed(3)+", nu "+m.nu.toFixed(3)+
+      (GOAL==="auxetic"?" / "+(+nuT.value).toFixed(2):"")+(m.nu<0?" auxetic":"");
     cell.appendChild(cap);
     grid.appendChild(cell);
   });
