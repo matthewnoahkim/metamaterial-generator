@@ -3,9 +3,14 @@ Diffusion v2: conditional DDPM on the 8040-cell dataset.
 Condition = [volume_fraction (1)] + [stiffness one-hot low/med/high (3)] = 4 dims.
 Adds EMA of the weights (sampled from the EMA copy) and CFG dropout.
 
+Solidity regularizer (--reg): on top of the noise-prediction MSE, penalise
+scattered / speckled designs so generated cells read as solid shapes rather than
+salt-and-pepper. See solidity_penalty(). Set --reg 0 to train the plain model.
+
 Chunked/resumable trainer keeps each call short.
 Usage:
-  python ddpm2.py train --epochs 8     # repeat to resume
+  python ddpm2.py train --epochs 8               # repeat to resume
+  python ddpm2.py train --epochs 8 --reg 0.05    # tune the solidity weight
   python ddpm2.py sample --vf 0.4 --stiff high -n 16 --guidance 2.0
 """
 import os, sys, csv, math, copy, argparse
@@ -114,7 +119,37 @@ def q_sample(x0, t, n):
     return a.sqrt() * x0 + (1 - a).sqrt() * n
 
 
-def train(epochs, p_drop=0.12, lr=2e-4, batch=128, ema_decay=0.999):
+# 3x3 kernel summing the 8 neighbours of each cell (self weight 0)
+_NEIGHBOR_K = torch.tensor([[1., 1., 1.],
+                            [1., 0., 1.],
+                            [1., 1., 1.]]).view(1, 1, 3, 3)
+
+
+def solidity_penalty(x0, weight):
+    """Discourage scattered / speckled designs, measured on the predicted clean
+    cell x0 (in [-1, 1]). Both terms are linear operators (a 'matrix') applied to
+    the occupancy field, so they add almost no cost:
+
+      * total variation = boundary length -> pushes mass into fewer, larger
+        blobs instead of salt-and-pepper noise;
+      * isolation       = a solid pixel whose neighbourhood is mostly empty is a
+        floating speck; penalise it directly via the 3x3 neighbour kernel.
+
+    These are periodic unit cells, so both use circular (wrap-around) padding.
+    `weight` is a per-sample factor (pass abar_t) so the penalty acts where the
+    x0 estimate is trustworthy (low-noise steps) and is muted at high noise,
+    where x0 reconstructed from predicted noise is unreliable.
+    """
+    s = ((x0 + 1.0) * 0.5).clamp(0.0, 1.0)               # occupancy in [0,1]
+    sp = F.pad(s, (1, 1, 1, 1), mode="circular")         # periodic boundary
+    tv = ((sp[:, :, 1:, :] - sp[:, :, :-1, :]).abs().mean(dim=[1, 2, 3])
+          + (sp[:, :, :, 1:] - sp[:, :, :, :-1]).abs().mean(dim=[1, 2, 3]))
+    nb = F.conv2d(sp, _NEIGHBOR_K.to(x0.device)) / 8.0   # mean neighbour occ.
+    isolation = (s * (1.0 - nb)).mean(dim=[1, 2, 3])     # solid, empty around it
+    return (weight * (tv + isolation)).mean()
+
+
+def train(epochs, p_drop=0.12, lr=2e-4, batch=128, ema_decay=0.999, reg_weight=0.05):
     torch.manual_seed(0)
     ds = Cells(); dl = DataLoader(ds, batch_size=batch, shuffle=True)
     model = UNet().to(DEVICE); opt = torch.optim.Adam(model.parameters(), lr=lr)
@@ -125,20 +160,30 @@ def train(epochs, p_drop=0.12, lr=2e-4, batch=128, ema_decay=0.999):
         model.load_state_dict(ck["state"]); opt.load_state_dict(ck["opt"])
         ema.load_state_dict(ck["ema"]); start = ck["epoch"]
     model.train()
+    ab = abar.to(DEVICE)
     for ep in range(start + 1, start + epochs + 1):
-        tot = 0.0
+        tot = 0.0; totr = 0.0
         for x, c in dl:
             x, c = x.to(DEVICE), c.to(DEVICE); b = x.size(0)
             t = torch.randint(0, T_STEPS, (b,), device=DEVICE)
             n = torch.randn_like(x)
             drop = torch.rand(b, device=DEVICE) < p_drop
-            pred = model(q_sample(x, t, n), t, c, drop)
-            loss = F.mse_loss(pred, n)
-            opt.zero_grad(); loss.backward(); opt.step(); tot += loss.item()
+            xt = q_sample(x, t, n)
+            pred = model(xt, t, c, drop)
+            mse = F.mse_loss(pred, n)
+            if reg_weight > 0:
+                a = ab[t][:, None, None, None]
+                x0 = ((xt - (1 - a).sqrt() * pred) / a.sqrt()).clamp(-1, 1)
+                reg = solidity_penalty(x0, ab[t])
+            else:
+                reg = torch.zeros((), device=DEVICE)
+            loss = mse + reg_weight * reg
+            opt.zero_grad(); loss.backward(); opt.step()
+            tot += mse.item(); totr += float(reg)
             with torch.no_grad():
                 for pe, pm in zip(ema.parameters(), model.parameters()):
                     pe.mul_(ema_decay).add_(pm, alpha=1 - ema_decay)
-        print(f"epoch {ep:3d} loss {tot/len(dl):.4f}")
+        print(f"epoch {ep:3d} mse {tot/len(dl):.4f} solidity {totr/len(dl):.4f}")
     torch.save({"state": model.state_dict(), "ema": ema.state_dict(),
                 "opt": opt.state_dict(), "epoch": start + epochs,
                 "edges": ds.edges}, CKPT)
@@ -172,6 +217,8 @@ def ddim_sample(model, n, cond_vec, steps=50, guidance=2.0, seed=None, symmetriz
 def main():
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("train"); t.add_argument("--epochs", type=int, default=8)
+    t.add_argument("--reg", type=float, default=0.05,
+                   help="solidity-penalty weight (0 = plain noise-prediction MSE)")
     s = sub.add_parser("sample")
     s.add_argument("--vf", type=float, default=0.4)
     s.add_argument("--stiff", default="high", choices=STIFF)
@@ -179,7 +226,7 @@ def main():
     s.add_argument("--use-ema", action="store_true", default=True)
     args = ap.parse_args()
     if args.cmd == "train":
-        train(epochs=args.epochs)
+        train(epochs=args.epochs, reg_weight=args.reg)
     else:
         ck = torch.load(CKPT, map_location=DEVICE, weights_only=False)
         m = UNet().to(DEVICE); m.load_state_dict(ck["ema"])
