@@ -111,8 +111,8 @@ canvas{image-rendering:pixelated;border:1px solid #000}
 <p>The ONNX graph is the denoiser; the DDIM loop, classifier-free guidance, and the evaluator all run in JavaScript.</p>
 <p>Volume-fraction control is calibrated and reliable in roughly 0.37–0.57. Stiffness conditioning separates low vs high by about 2&times;.</p>
 <p><b>Solidify</b> removes tiny floating specks and fills lone pinholes after sampling, so cells read as solid shapes rather than scattered noise; ranking then favours connected, few-piece designs. Every number shown is re-measured on the cleaned cell.</p>
-<p><b>Optimize stiffness (SIMP)</b> refines each sample with a few iterations of inverse-homogenization topology optimization — maximizing effective bulk modulus at the cell's volume fraction, density-filtered for a minimum length scale. This is the "generate-then-optimize" idea: diffusion proposes, topology optimization polishes into a clean, connected, mechanically optimal shape (Sigmund 1994; Andreassen&nbsp;et&nbsp;al.&nbsp;2011). It maximizes stiffness, so it's disabled for auxetic targets.</p>
-<p><b>Physics guidance</b> folds the same objective <i>into</i> denoising instead of after it (TopoDiff-style; Mazé&nbsp;&amp;&nbsp;Ahmed&nbsp;2023): over the last few DDIM steps the clean-cell estimate is nudged up the stiffness gradient (one FE solve per cell per step, volume-preserved). Unlike the post-hoc polish it keeps the batch diverse, but it is slower. Standard mode only.</p>
+<p><b>Optimize stiffness (SIMP)</b> refines each sample with a few iterations of inverse-homogenization topology optimization — density-filtered for a minimum length scale. This is the "generate-then-optimize" idea: diffusion proposes, topology optimization polishes into a clean, connected, mechanically optimal shape (Sigmund 1994; Andreassen&nbsp;et&nbsp;al.&nbsp;2011). In standard mode it maximizes bulk modulus; in <b>auxetic</b> mode it minimizes C<sub>1122</sub>&nbsp;&minus;&nbsp;&beta;(C<sub>1111</sub>+C<sub>2222</sub>) with enforced symmetry (Sigmund&nbsp;1995) and is kept only if it actually lowers the measured Poisson's ratio — so it can deepen auxeticity but never harm it (a short polish can't create re-entrant geometry from scratch).</p>
+<p><b>Physics guidance</b> folds the same objective <i>into</i> denoising instead of after it (TopoDiff-style; Mazé&nbsp;&amp;&nbsp;Ahmed&nbsp;2023): over the last few DDIM steps the clean-cell estimate is nudged along the stiffness (or, in auxetic mode, the negative-Poisson) gradient — one FE solve per cell per step, volume-preserved. Unlike the post-hoc polish it keeps the batch diverse, but it is slower.</p>
 <p><b>Auxetic targets (&nu; &lt; 0):</b> routed to a second DDPM — a specialist trained on 2,000 FEM-labeled rotating-squares cells, conditioned on [vf,&nbsp;&nu;]. It samples a double batch and ranks by the measured &nu; (the mixed model cannot switch geometry family from a conditioning channel — four retraining attempts confirmed this). In auxetic mode vf control is approximate. Every number shown is homogenized from the generated cell, never assumed.</p>
 </div>
 
@@ -392,6 +392,7 @@ function optimizeCell(solid,m,targetVF,opts={}){
         for(let i=0;i<ndof;i++)pv[i]=z[i]+be*pv[i];rz=rz2;}
       return x;});
   }
+  const auxetic=opts.objective==='auxetic', beta=opts.beta!=null?opts.beta:0.8;
   let x=new Float64Array(nel);
   for(let i=0;i<nel;i++) x[i]= solid[i]?0.9:0.1;   // init from the sample
   let xPhys=filter(x);
@@ -399,16 +400,24 @@ function optimizeCell(solid,m,targetVF,opts={}){
     const scale=new Float32Array(nel), dscale=new Float64Array(nel);
     for(let e=0;e<nel;e++){const xp=xPhys[e];scale[e]=Emin+(1-Emin)*Math.pow(xp,p);dscale[e]=(1-Emin)*p*Math.pow(xp,p-1);}
     const chi=solveChi(scale);const V=nel;
-    const dKdPhys=new Float64Array(nel);   // dK/dxPhys, K=(C11+C22+2C12)/4
+    // per-element energies E00=Cxx, E11=Cyy, E01=coupling; plus totals
+    const E00=new Float64Array(nel),E11=new Float64Array(nel),E01=new Float64Array(nel);
+    let C00=0,C11=0,C01=0;
     for(let e=0;e<nel;e++){const o=e*8;
       const d=[[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0]];
       for(let c=0;c<3;c++)for(let k=0;k<8;k++) d[c][k]=CHI0[k][c]-chi[c][edof[o+k]];
       const en=(i,j)=>{const di=d[i];const dik=[0,0,0,0,0,0,0,0];
         for(let a=0;a<8;a++){let s=0;const ra=KE[a];for(let k=0;k<8;k++)s+=ra[k]*di[k];dik[a]=s;}
         let s=0;for(let k=0;k<8;k++)s+=dik[k]*d[j][k];return s;};
-      dKdPhys[e]=dscale[e]*(en(0,0)+en(1,1)+2*en(0,1))/4/V;
+      const a00=en(0,0),a11=en(1,1),a01=en(0,1); E00[e]=a00;E11[e]=a11;E01[e]=a01;
+      C00+=scale[e]*a00/V; C11+=scale[e]*a11/V; C01+=scale[e]*a01/V;
     }
-    const dc=filterT(dKdPhys.map(v=>-v));       // minimize c=-K
+    // objective to MINIMIZE. auxetic: C01-beta*(C00+C11) -> negative Poisson while
+    // staying stiff (Sigmund 1995; Andreassen 2014). else: -K (maximize bulk).
+    const dObj=new Float64Array(nel);
+    if(auxetic){ for(let e=0;e<nel;e++) dObj[e]=dscale[e]*(E01[e]-beta*(E00[e]+E11[e]))/V; }
+    else{ for(let e=0;e<nel;e++) dObj[e]= -dscale[e]*(E00[e]+E11[e]+2*E01[e])/4/V; }
+    const dc=filterT(dObj);
     const dv=filterT(new Float64Array(nel).fill(1/nel));
     let l1=1e-9,l2=1e9;const xn=new Float64Array(nel);   // OC update
     while((l2-l1)/(l1+l2)>1e-4){const lm=0.5*(l1+l2);
@@ -417,6 +426,10 @@ function optimizeCell(solid,m,targetVF,opts={}){
         v=Math.max(0,Math.max(x[e]-move,Math.min(1,Math.min(x[e]+move,v))));xn[e]=v;}
       const xpN=filter(xn);let vol=0;for(let e=0;e<nel;e++)vol+=xpN[e];vol/=nel;
       if(vol>targetVF)l1=lm;else l2=lm;}
+    if(opts.symmetric){ // fold to biaxial symmetry (helps find re-entrant cells)
+      for(let y=0;y<m;y++)for(let xx=0;xx<m;xx++){const xm=m-1-xx,ym=m-1-y;
+        xn[y*m+xx]=(xn[y*m+xx]+xn[y*m+xm]+xn[ym*m+xx]+xn[ym*m+xm])*0.25;}
+    }
     x=xn;xPhys=filter(x);
   }
   // Heaviside-style final projection at the target-vf level -> crisp smooth edge
@@ -459,16 +472,24 @@ function stiffnessGrad(dens,m,opts){
       for(let i=0;i<ndof;i++)z[i]=r[i]/(diag[i]||1);z[0]=0;z[1]=0;const rz2=dot(r,z),be=rz2/rz;
       for(let i=0;i<ndof;i++)pv[i]=z[i]+be*pv[i];rz=rz2;}
     return x;});
-  const V=nel;const dKds=new Float64Array(nel);
+  const auxetic=opts.objective==='auxetic', beta=opts.beta!=null?opts.beta:0.8;
+  const V=nel;const E00=new Float64Array(nel),E11=new Float64Array(nel),E01=new Float64Array(nel);
   for(let e=0;e<nel;e++){const o=e*8;
     const d=[[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0]];
     for(let c=0;c<3;c++)for(let k=0;k<8;k++) d[c][k]=CHI0[k][c]-chi[c][edof[o+k]];
     const en=(i,j)=>{const di=d[i];const dik=[0,0,0,0,0,0,0,0];
       for(let a=0;a<8;a++){let s=0;const ra=KE[a];for(let k=0;k<8;k++)s+=ra[k]*di[k];dik[a]=s;}
       let s=0;for(let k=0;k<8;k++)s+=dik[k]*d[j][k];return s;};
-    dKds[e]=dscale[e]*(en(0,0)+en(1,1)+2*en(0,1))/4/V;
+    E00[e]=en(0,0);E11[e]=en(1,1);E01[e]=en(0,1);
   }
-  return dKds;
+  // ASCENT gradient (guidance nudges x0 up it). auxetic: -d/ds[C01-beta*(C00+C11)]
+  // so ascending lowers the coupling; else: dK/ds (stiffer).
+  const g=new Float64Array(nel);
+  for(let e=0;e<nel;e++){
+    if(auxetic) g[e]= -dscale[e]*(E01[e]-beta*(E00[e]+E11[e]))/V;
+    else g[e]=dscale[e]*(E00[e]+E11[e]+2*E01[e])/4/V;
+  }
+  return g;
 }
 // ===================== diffusion schedule =====================
 const T_STEPS=400, IMGD=32, M=24;
@@ -555,7 +576,7 @@ async function sampleBatch(which,n,condVec,guidance,steps,onProg,guide){
       for(let i=0;i<n;i++){
         const off=i*px, dens=new Float64Array(px);
         for(let k=0;k<px;k++) dens[k]=(x0A[off+k]+1)*0.5;
-        const g=stiffnessGrad(dens,IMGD,{cg:60});
+        const g=stiffnessGrad(dens,IMGD,{cg:60,objective:guide.objective,beta:guide.beta});
         let mean=0; for(let k=0;k<px;k++) mean+=g[k]; mean/=px;
         let mx=1e-12; for(let k=0;k<px;k++){const a2=Math.abs(g[k]-mean); if(a2>mx)mx=a2;}
         const lr=guide.strength;
@@ -671,10 +692,11 @@ go.onclick=async()=>{
   }else{
     const c=[vfRequestFor(targetVF),0,0,0]; c[1+STIFF]=1; condVec=c;
   }
-  // physics guidance (Option D): steer sampling toward stiffer cells over the
-  // last K denoising steps. Std mode only (aux uses a Poisson objective, TODO).
-  const guide=(GUIDE && !isAux)
-    ? {K:Math.min(12,Math.max(4,Math.round(nSteps*0.3))), strength:0.25} : null;
+  // physics guidance (Option D): steer sampling over the last K denoising steps,
+  // toward stiffer cells (std) or lower Poisson (auxetic).
+  const guide=GUIDE
+    ? {K:Math.min(12,Math.max(4,Math.round(nSteps*0.3))), strength:0.25,
+       objective:isAux?"auxetic":"bulk", beta:0.5} : null;
   status.textContent="Sampling "+n+" cells (target vf "+targetVF.toFixed(2)+
     (isAux?", target ν "+targetNu.toFixed(2)+", auxetic model":", stiffness "+stiffName)+
     (guide?", physics-guided":"")+")…";
@@ -696,13 +718,21 @@ go.onclick=async()=>{
     const minSize=Math.max(4,Math.round(0.006*IMGD*IMGD));  // ~6 px on 32x32
     cells=cells.map(a=>despeckle(a,IMGD,minSize));
   }
-  if(OPT && !isAux){   // SIMP polish; skipped in auxetic mode (max-K kills nu<0)
+  if(OPT){   // SIMP polish: max stiffness (std) or minimise Poisson (auxetic)
+    const minSize=Math.max(4,Math.round(0.006*IMGD*IMGD));
     for(let i=0;i<cells.length;i++){
       status.textContent="Optimizing (SIMP polish) "+(i+1)+"/"+cells.length+"…";
       await new Promise(r=>setTimeout(r,0));
       const vfHere=volumeFraction(cells[i]);
-      cells[i]=optimizeCell(cells[i],IMGD,vfHere,{iters:15,rmin:2.0});
-      if(SOLID) cells[i]=despeckle(cells[i],IMGD,Math.max(4,Math.round(0.006*IMGD*IMGD)));
+      const opt=isAux
+        ? {iters:30,rmin:1.5,objective:"auxetic",symmetric:true,beta:0.5}
+        : {iters:15,rmin:2.0};
+      let pol=optimizeCell(cells[i],IMGD,vfHere,opt);
+      if(SOLID) pol=despeckle(pol,IMGD,minSize);
+      // auxetic: keep the polish only if it actually lowered measured Poisson,
+      // so the step can deepen auxeticity but never harm it
+      if(isAux){ if(evaluateCell(pol).nu < evaluateCell(cells[i]).nu) cells[i]=pol; }
+      else cells[i]=pol;
     }
   }
   status.textContent="Evaluating with in-browser homogenization…";
