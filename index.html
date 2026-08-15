@@ -77,6 +77,11 @@ canvas{image-rendering:pixelated;border:1px solid #000}
 </div>
 
 <div class="ctrl">
+<label>Optimization</label>
+<div class="seg"><button type="button" id="optT">Optimize stiffness (SIMP)</button></div>
+</div>
+
+<div class="ctrl">
 <label>Target Poisson's ratio &nu;</label>
 <span id="nuL">+0.30 (standard)</span>
 <input type="range" id="nuT" min="-0.8" max="0.3" step="0.05" value="0.3">
@@ -101,6 +106,7 @@ canvas{image-rendering:pixelated;border:1px solid #000}
 <p>The ONNX graph is the denoiser; the DDIM loop, classifier-free guidance, and the evaluator all run in JavaScript.</p>
 <p>Volume-fraction control is calibrated and reliable in roughly 0.37–0.57. Stiffness conditioning separates low vs high by about 2&times;.</p>
 <p><b>Solidify</b> removes tiny floating specks and fills lone pinholes after sampling, so cells read as solid shapes rather than scattered noise; ranking then favours connected, few-piece designs. Every number shown is re-measured on the cleaned cell.</p>
+<p><b>Optimize stiffness (SIMP)</b> refines each sample with a few iterations of inverse-homogenization topology optimization — maximizing effective bulk modulus at the cell's volume fraction, density-filtered for a minimum length scale. This is the "generate-then-optimize" idea: diffusion proposes, topology optimization polishes into a clean, connected, mechanically optimal shape (Sigmund 1994; Andreassen&nbsp;et&nbsp;al.&nbsp;2011). It maximizes stiffness, so it's disabled for auxetic targets.</p>
 <p><b>Auxetic targets (&nu; &lt; 0):</b> routed to a second DDPM — a specialist trained on 2,000 FEM-labeled rotating-squares cells, conditioned on [vf,&nbsp;&nu;]. It samples a double batch and ranks by the measured &nu; (the mixed model cannot switch geometry family from a conditioning channel — four retraining attempts confirmed this). In auxetic mode vf control is approximate. Every number shown is homogenized from the generated cell, never assumed.</p>
 </div>
 
@@ -334,6 +340,85 @@ function homogenize(solid,m,voidScale=1e-3,maxit=400,tol=1e-5){
   return {Ex,Ey,nu,G};
 }
 function dot(a,b){let s=0;for(let i=0;i<a.length;i++)s+=a[i]*b[i];return s;}
+
+// ===================== inverse-homogenization polish (SIMP) =====================
+// Generate-then-optimize (Option B): refine a rough diffusion sample into a
+// clean, connected, stiffness-optimal cell by maximizing the effective bulk
+// modulus at fixed volume fraction, density-filtered for a minimum length scale
+// (curved, non-speckled edges). Inverse homogenization: Sigmund, "Materials with
+// prescribed constitutive parameters," Int. J. Solids Struct. (1994). OC update +
+// density filter: Sigmund (2001); Andreassen et al. (2011). Reuses KE/CHI0/dot.
+function optimizeCell(solid,m,targetVF,opts={}){
+  const iters=opts.iters||15, p=opts.p||3, rmin=opts.rmin||2.0, Emin=1e-3, move=0.2;
+  const nel=m*m, ndof=2*m*m;
+  const edof=new Int32Array(nel*8);
+  for(let ey=0;ey<m;ey++)for(let ex=0;ex<m;ex++){const e=ey*m+ex;const nid=(ix,iy)=>((iy%m)*m+(ix%m));
+    const nodes=[nid(ex,ey),nid(ex+1,ey),nid(ex+1,ey+1),nid(ex,ey+1)];
+    for(let k=0;k<4;k++){edof[e*8+2*k]=2*nodes[k];edof[e*8+2*k+1]=2*nodes[k]+1;}}
+  const fe=[[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]];
+  for(let i=0;i<8;i++)for(let c=0;c<3;c++){let s=0;for(let k=0;k<8;k++)s+=KE[i][k]*CHI0[k][c];fe[i][c]=s;}
+  // periodic density-filter neighbourhoods (precomputed)
+  const rr=Math.floor(rmin), fN=[], fW=[], fWs=new Float32Array(nel);
+  for(let ey=0;ey<m;ey++)for(let ex=0;ex<m;ex++){const e=ey*m+ex;const nb=[],w=[];let ws=0;
+    for(let dy=-rr;dy<=rr;dy++)for(let dx=-rr;dx<=rr;dx++){const dist=Math.hypot(dx,dy);if(dist>=rmin)continue;
+      const jx=((ex+dx)%m+m)%m,jy=((ey+dy)%m+m)%m;nb.push(jy*m+jx);w.push(rmin-dist);ws+=rmin-dist;}
+    fN.push(nb);fW.push(w);fWs[e]=ws;}
+  const filter=(field)=>{const out=new Float64Array(nel);
+    for(let e=0;e<nel;e++){let s=0;const nb=fN[e],w=fW[e];for(let k=0;k<nb.length;k++)s+=w[k]*field[nb[k]];out[e]=s/fWs[e];}return out;};
+  const filterT=(dPhys)=>{const out=new Float64Array(nel);
+    for(let e=0;e<nel;e++){const nb=fN[e],w=fW[e],c=dPhys[e]/fWs[e];for(let k=0;k<nb.length;k++)out[nb[k]]+=w[k]*c;}return out;};
+  function solveChi(scale){
+    const diag=new Float32Array(ndof);
+    for(let e=0;e<nel;e++)for(let k=0;k<8;k++) diag[edof[e*8+k]]+=scale[e]*KE[k][k];
+    const matvec=(x)=>{const y=new Float32Array(ndof);
+      for(let e=0;e<nel;e++){const o=e*8,sc=scale[e];const xe=[x[edof[o]],x[edof[o+1]],x[edof[o+2]],x[edof[o+3]],x[edof[o+4]],x[edof[o+5]],x[edof[o+6]],x[edof[o+7]]];
+        for(let i=0;i<8;i++){let s=0;const ri=KE[i];for(let k=0;k<8;k++)s+=ri[k]*xe[k];y[edof[o+i]]+=sc*s;}}return y;};
+    const F=[new Float32Array(ndof),new Float32Array(ndof),new Float32Array(ndof)];
+    for(let e=0;e<nel;e++)for(let k=0;k<8;k++)for(let c=0;c<3;c++) F[c][edof[e*8+k]]+=scale[e]*fe[k][c];
+    return [0,1,2].map(c=>{const b=Float32Array.from(F[c]);b[0]=0;b[1]=0;const x=new Float32Array(ndof);
+      let r=matvec(x);for(let i=0;i<ndof;i++)r[i]=b[i]-r[i];r[0]=0;r[1]=0;
+      const z=new Float32Array(ndof);for(let i=0;i<ndof;i++)z[i]=r[i]/(diag[i]||1);z[0]=0;z[1]=0;
+      let pv=Float32Array.from(z);let rz=dot(r,z);const bn=Math.sqrt(dot(b,b)+1e-30);
+      for(let it=0;it<150;it++){let Ap=matvec(pv);Ap[0]=0;Ap[1]=0;const al=rz/(dot(pv,Ap)+1e-30);
+        for(let i=0;i<ndof;i++){x[i]+=al*pv[i];r[i]-=al*Ap[i];}
+        if(Math.sqrt(dot(r,r))<1e-6*bn)break;
+        for(let i=0;i<ndof;i++)z[i]=r[i]/(diag[i]||1);z[0]=0;z[1]=0;const rz2=dot(r,z),be=rz2/rz;
+        for(let i=0;i<ndof;i++)pv[i]=z[i]+be*pv[i];rz=rz2;}
+      return x;});
+  }
+  let x=new Float64Array(nel);
+  for(let i=0;i<nel;i++) x[i]= solid[i]?0.9:0.1;   // init from the sample
+  let xPhys=filter(x);
+  for(let it=0;it<iters;it++){
+    const scale=new Float32Array(nel), dscale=new Float64Array(nel);
+    for(let e=0;e<nel;e++){const xp=xPhys[e];scale[e]=Emin+(1-Emin)*Math.pow(xp,p);dscale[e]=(1-Emin)*p*Math.pow(xp,p-1);}
+    const chi=solveChi(scale);const V=nel;
+    const dKdPhys=new Float64Array(nel);   // dK/dxPhys, K=(C11+C22+2C12)/4
+    for(let e=0;e<nel;e++){const o=e*8;
+      const d=[[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0]];
+      for(let c=0;c<3;c++)for(let k=0;k<8;k++) d[c][k]=CHI0[k][c]-chi[c][edof[o+k]];
+      const en=(i,j)=>{const di=d[i];const dik=[0,0,0,0,0,0,0,0];
+        for(let a=0;a<8;a++){let s=0;const ra=KE[a];for(let k=0;k<8;k++)s+=ra[k]*di[k];dik[a]=s;}
+        let s=0;for(let k=0;k<8;k++)s+=dik[k]*d[j][k];return s;};
+      dKdPhys[e]=dscale[e]*(en(0,0)+en(1,1)+2*en(0,1))/4/V;
+    }
+    const dc=filterT(dKdPhys.map(v=>-v));       // minimize c=-K
+    const dv=filterT(new Float64Array(nel).fill(1/nel));
+    let l1=1e-9,l2=1e9;const xn=new Float64Array(nel);   // OC update
+    while((l2-l1)/(l1+l2)>1e-4){const lm=0.5*(l1+l2);
+      for(let e=0;e<nel;e++){const be=Math.max(0,-dc[e]/(dv[e]*lm+1e-30));
+        let v=x[e]*Math.sqrt(be);
+        v=Math.max(0,Math.max(x[e]-move,Math.min(1,Math.min(x[e]+move,v))));xn[e]=v;}
+      const xpN=filter(xn);let vol=0;for(let e=0;e<nel;e++)vol+=xpN[e];vol/=nel;
+      if(vol>targetVF)l1=lm;else l2=lm;}
+    x=xn;xPhys=filter(x);
+  }
+  // Heaviside-style final projection at the target-vf level -> crisp smooth edge
+  const srt=Float64Array.from(xPhys).sort();const kth=Math.floor((1-targetVF)*nel);
+  const thr=srt[Math.min(nel-1,Math.max(0,kth))];
+  const out=new Uint8Array(nel);for(let e=0;e<nel;e++) out[e]=xPhys[e]>=thr?1:0;
+  return out;
+}
 // ===================== diffusion schedule =====================
 const T_STEPS=400, IMGD=32, M=24;
 const betas=Array.from({length:T_STEPS},(_,i)=>1e-4+(0.02-1e-4)*i/(T_STEPS-1));
@@ -473,6 +558,11 @@ document.getElementById("solidT").onclick=()=>{
   SOLID=!SOLID;
   document.getElementById("solidT").classList.toggle("on",SOLID);
 };
+let OPT=false;
+document.getElementById("optT").onclick=()=>{
+  OPT=!OPT;
+  document.getElementById("optT").classList.toggle("on",OPT);
+};
 
 function drawCell(canvas,a,n){
   const tile=2;
@@ -528,6 +618,15 @@ go.onclick=async()=>{
   if(SOLID){
     const minSize=Math.max(4,Math.round(0.006*IMGD*IMGD));  // ~6 px on 32x32
     cells=cells.map(a=>despeckle(a,IMGD,minSize));
+  }
+  if(OPT && !isAux){   // SIMP polish; skipped in auxetic mode (max-K kills nu<0)
+    for(let i=0;i<cells.length;i++){
+      status.textContent="Optimizing (SIMP polish) "+(i+1)+"/"+cells.length+"…";
+      await new Promise(r=>setTimeout(r,0));
+      const vfHere=volumeFraction(cells[i]);
+      cells[i]=optimizeCell(cells[i],IMGD,vfHere,{iters:15,rmin:2.0});
+      if(SOLID) cells[i]=despeckle(cells[i],IMGD,Math.max(4,Math.round(0.006*IMGD*IMGD)));
+    }
   }
   status.textContent="Evaluating with in-browser homogenization…";
   const scored=cells.map(a=>({a,m:evaluateCell(a)}));
