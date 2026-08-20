@@ -23,8 +23,8 @@ IMG = 32
 T_STEPS = 400
 COND_DIM = 4
 STIFF = ["low", "medium", "high"]
-DATA = "/home/claude/unitcells_big"
-CKPT = "/home/claude/checkpoints/ddpm2.pt"
+DATA = os.environ.get("DDPM_DATA", "/home/claude/unitcells_big")
+CKPT = os.environ.get("DDPM_CKPT", "/home/claude/checkpoints/ddpm2.pt")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 betas = torch.linspace(1e-4, 0.02, T_STEPS)
@@ -179,11 +179,12 @@ def train(epochs, p_drop=0.12, lr=2e-4, batch=128, ema_decay=0.999, reg_weight=0
                 reg = torch.zeros((), device=DEVICE)
             loss = mse + reg_weight * reg
             opt.zero_grad(); loss.backward(); opt.step()
-            tot += mse.item(); totr += float(reg)
+            tot += mse.item(); totr += float(reg.detach())
             with torch.no_grad():
                 for pe, pm in zip(ema.parameters(), model.parameters()):
                     pe.mul_(ema_decay).add_(pm, alpha=1 - ema_decay)
         print(f"epoch {ep:3d} mse {tot/len(dl):.4f} solidity {totr/len(dl):.4f}")
+    os.makedirs(os.path.dirname(CKPT) or ".", exist_ok=True)
     torch.save({"state": model.state_dict(), "ema": ema.state_dict(),
                 "opt": opt.state_dict(), "epoch": start + epochs,
                 "edges": ds.edges}, CKPT)
