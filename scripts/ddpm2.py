@@ -79,20 +79,23 @@ class ResBlock(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, ed=128):
-        super().__init__(); self.ed = ed
+    # w = base channel width (32 = shipped model). Channels scale [w, 2w, 4w];
+    # keep w divisible by 4 so all GroupNorm(8, .) groups stay valid.
+    def __init__(self, ed=128, w=32):
+        super().__init__(); self.ed = ed; self.w = w
+        c1, c2, c3 = w, 2 * w, 4 * w
         self.t_mlp = nn.Sequential(nn.Linear(ed, ed), nn.SiLU(), nn.Linear(ed, ed))
         self.c_mlp = nn.Sequential(nn.Linear(COND_DIM, ed), nn.SiLU(), nn.Linear(ed, ed))
         self.null = nn.Parameter(torch.zeros(ed))
-        self.inc = nn.Conv2d(1, 32, 3, 1, 1)
-        self.d1 = ResBlock(32, 32, ed); self.p1 = nn.Conv2d(32, 32, 4, 2, 1)
-        self.d2 = ResBlock(32, 64, ed); self.p2 = nn.Conv2d(64, 64, 4, 2, 1)
-        self.d3 = ResBlock(64, 128, ed); self.p3 = nn.Conv2d(128, 128, 4, 2, 1)
-        self.m1 = ResBlock(128, 128, ed); self.m2 = ResBlock(128, 128, ed)
-        self.u3 = nn.ConvTranspose2d(128, 128, 4, 2, 1); self.r3 = ResBlock(256, 64, ed)
-        self.u2 = nn.ConvTranspose2d(64, 64, 4, 2, 1); self.r2 = ResBlock(128, 32, ed)
-        self.u1 = nn.ConvTranspose2d(32, 32, 4, 2, 1); self.r1 = ResBlock(64, 32, ed)
-        self.out = nn.Sequential(nn.GroupNorm(8, 32), nn.SiLU(), nn.Conv2d(32, 1, 3, 1, 1))
+        self.inc = nn.Conv2d(1, c1, 3, 1, 1)
+        self.d1 = ResBlock(c1, c1, ed); self.p1 = nn.Conv2d(c1, c1, 4, 2, 1)
+        self.d2 = ResBlock(c1, c2, ed); self.p2 = nn.Conv2d(c2, c2, 4, 2, 1)
+        self.d3 = ResBlock(c2, c3, ed); self.p3 = nn.Conv2d(c3, c3, 4, 2, 1)
+        self.m1 = ResBlock(c3, c3, ed); self.m2 = ResBlock(c3, c3, ed)
+        self.u3 = nn.ConvTranspose2d(c3, c3, 4, 2, 1); self.r3 = ResBlock(c3 + c3, c2, ed)
+        self.u2 = nn.ConvTranspose2d(c2, c2, 4, 2, 1); self.r2 = ResBlock(c2 + c2, c1, ed)
+        self.u1 = nn.ConvTranspose2d(c1, c1, 4, 2, 1); self.r1 = ResBlock(c1 + c1, c1, ed)
+        self.out = nn.Sequential(nn.GroupNorm(8, c1), nn.SiLU(), nn.Conv2d(c1, 1, 3, 1, 1))
 
     def forward(self, x, t, cond, drop=None):
         e = self.t_mlp(time_embed(t, self.ed))
@@ -149,10 +152,11 @@ def solidity_penalty(x0, weight):
     return (weight * (tv + isolation)).mean()
 
 
-def train(epochs, p_drop=0.12, lr=2e-4, batch=128, ema_decay=0.999, reg_weight=0.05):
+def train(epochs, p_drop=0.12, lr=2e-4, batch=128, ema_decay=0.999, reg_weight=0.05,
+          width=32):
     torch.manual_seed(0)
     ds = Cells(); dl = DataLoader(ds, batch_size=batch, shuffle=True)
-    model = UNet().to(DEVICE); opt = torch.optim.Adam(model.parameters(), lr=lr)
+    model = UNet(w=width).to(DEVICE); opt = torch.optim.Adam(model.parameters(), lr=lr)
     ema = copy.deepcopy(model); [p.requires_grad_(False) for p in ema.parameters()]
     start = 0
     if os.path.exists(CKPT):
@@ -187,7 +191,7 @@ def train(epochs, p_drop=0.12, lr=2e-4, batch=128, ema_decay=0.999, reg_weight=0
     os.makedirs(os.path.dirname(CKPT) or ".", exist_ok=True)
     torch.save({"state": model.state_dict(), "ema": ema.state_dict(),
                 "opt": opt.state_dict(), "epoch": start + epochs,
-                "edges": ds.edges}, CKPT)
+                "edges": ds.edges, "width": width}, CKPT)
     print(f"saved at epoch {start + epochs} (edges {ds.edges})")
 
 
@@ -220,6 +224,8 @@ def main():
     t = sub.add_parser("train"); t.add_argument("--epochs", type=int, default=8)
     t.add_argument("--reg", type=float, default=0.05,
                    help="solidity-penalty weight (0 = plain noise-prediction MSE)")
+    t.add_argument("--width", type=int, default=32,
+                   help="U-Net base channel width (32 = shipped; try 48/64 for capacity)")
     s = sub.add_parser("sample")
     s.add_argument("--vf", type=float, default=0.4)
     s.add_argument("--stiff", default="high", choices=STIFF)
@@ -227,10 +233,10 @@ def main():
     s.add_argument("--use-ema", action="store_true", default=True)
     args = ap.parse_args()
     if args.cmd == "train":
-        train(epochs=args.epochs, reg_weight=args.reg)
+        train(epochs=args.epochs, reg_weight=args.reg, width=args.width)
     else:
         ck = torch.load(CKPT, map_location=DEVICE, weights_only=False)
-        m = UNet().to(DEVICE); m.load_state_dict(ck["ema"])
+        m = UNet(w=ck.get("width", 32)).to(DEVICE); m.load_state_dict(ck["ema"])
         cells = ddim_sample(m, args.n, make_cond(args.vf, args.stiff),
                             guidance=args.guidance, seed=0)
         print("mean vf:", round(float(np.mean([c.mean() for c in cells])), 3))

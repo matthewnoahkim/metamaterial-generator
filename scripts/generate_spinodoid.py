@@ -81,11 +81,12 @@ def spinodoid_field(size, res, beta, band, cone, n_waves, rng):
     return field * np.sqrt(2.0 / max(k, 1))   # unit-variance GRF (Kumar 2020)
 
 
-def make_cell(size, rng, ss=4):
+def make_cell(size, rng, ss=4, beta_lo=1.4, beta_hi=2.8):
     """One random spinodoid cell + the parameters used to make it. Coarse
     features (low beta) so a 32 px cell reads as smooth curved blobs rather than
-    fine noise; supersampled by `ss` then area-downsampled for clean edges."""
-    beta = rng.uniform(1.4, 2.8)              # feature frequency (cycles/cell)
+    fine noise; supersampled by `ss` then area-downsampled for clean edges.
+    Lower beta = larger features (easier for a small model to resolve cleanly)."""
+    beta = rng.uniform(beta_lo, beta_hi)      # feature frequency (cycles/cell)
     preset = PRESET_NAMES[rng.integers(0, len(PRESET_NAMES))]
     cone = CONE_PRESETS[preset]
     vf = float(rng.uniform(0.30, 0.62))       # target solid fraction
@@ -105,6 +106,10 @@ def main():
     ap.add_argument("--out", default="/home/claude/unitcells_spino",
                     help="output dir (images/ + labels_cond.csv)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--beta-lo", type=float, default=1.4,
+                    help="min feature frequency (cycles/cell); lower = coarser")
+    ap.add_argument("--beta-hi", type=float, default=2.8,
+                    help="max feature frequency (cycles/cell)")
     ap.add_argument("--montage", default=None,
                     help="also write an NxN contact sheet here for visual QA")
     args = ap.parse_args()
@@ -116,7 +121,8 @@ def main():
     rows, thumbs = [], []
     made = 0
     while made < args.n:
-        solid, meta = make_cell(args.size, rng)
+        solid, meta = make_cell(args.size, rng,
+                                beta_lo=args.beta_lo, beta_hi=args.beta_hi)
         vf = float(solid.mean())
         if vf < 0.15 or vf > 0.85:
             continue
