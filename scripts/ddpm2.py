@@ -19,7 +19,7 @@ import torch, torch.nn as nn, torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 
-IMG = 32
+IMG = int(os.environ.get("DDPM_IMG", "32"))   # 32 = shipped; 64 = high-res track
 T_STEPS = 400
 COND_DIM = 4
 STIFF = ["low", "medium", "high"]
