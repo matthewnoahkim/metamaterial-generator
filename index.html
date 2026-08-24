@@ -71,20 +71,6 @@ canvas{image-rendering:pixelated;border:1px solid #000}
 <div class="seg"><button type="button" id="symT">Enforce biaxial</button></div>
 </div>
 
-<div class="ctrl">
-<label>Cleanliness</label>
-<div class="seg"><button type="button" id="solidT" class="on">Solidify (remove specks)</button></div>
-</div>
-
-<div class="ctrl">
-<label>Optimization</label>
-<div class="seg"><button type="button" id="optT">Optimize stiffness (SIMP)</button></div>
-</div>
-
-<div class="ctrl">
-<label>Guided sampling</label>
-<div class="seg"><button type="button" id="guideT">Physics guidance (stiffness)</button></div>
-</div>
 
 <div class="ctrl">
 <label>Target Poisson's ratio &nu;</label>
@@ -647,21 +633,8 @@ document.getElementById("symT").onclick=()=>{
   SYM=!SYM;
   document.getElementById("symT").classList.toggle("on",SYM);
 };
-let SOLID=true;
-document.getElementById("solidT").onclick=()=>{
-  SOLID=!SOLID;
-  document.getElementById("solidT").classList.toggle("on",SOLID);
-};
-let OPT=false;
-document.getElementById("optT").onclick=()=>{
-  OPT=!OPT;
-  document.getElementById("optT").classList.toggle("on",OPT);
-};
-let GUIDE=false;
-document.getElementById("guideT").onclick=()=>{
-  GUIDE=!GUIDE;
-  document.getElementById("guideT").classList.toggle("on",GUIDE);
-};
+// always on (toggles removed from the UI): despeckle, SIMP polish, physics guidance
+const SOLID=true, OPT=true, GUIDE=true;
 
 function drawCell(canvas,a,n){
   const tile=2;
