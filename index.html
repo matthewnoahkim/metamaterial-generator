@@ -673,9 +673,13 @@ go.onclick=async()=>{
   }else{
     const c=[vfRequestFor(targetVF),0,0,0]; c[1+STIFF]=1; condVec=c;
   }
+  // stiffness optimizers (SIMP polish + physics guidance) only make sense when we
+  // WANT extreme stiffness: auxetic mode (minimise Poisson) or High stiffness.
+  // For Low/Medium targets they'd overshoot toward max stiffness, so skip them.
+  const stiffOpt = isAux || STIFF===2;
   // physics guidance (Option D): steer sampling over the last K denoising steps,
   // toward stiffer cells (std) or lower Poisson (auxetic).
-  const guide=GUIDE
+  const guide=(GUIDE && stiffOpt)
     ? {K:Math.min(12,Math.max(4,Math.round(nSteps*0.3))), strength:0.25,
        objective:isAux?"auxetic":"bulk", beta:0.5, target:isAux?targetNu:null} : null;
   status.textContent="Sampling "+n+" cells (target vf "+targetVF.toFixed(2)+
@@ -699,7 +703,7 @@ go.onclick=async()=>{
     const minSize=Math.max(4,Math.round(0.006*IMGD*IMGD));  // ~6 px on 32x32
     cells=cells.map(a=>despeckle(a,IMGD,minSize));
   }
-  if(OPT){   // SIMP polish: max stiffness (std) or minimise Poisson (auxetic)
+  if(OPT && stiffOpt){   // SIMP polish: max stiffness (High) or minimise Poisson (auxetic); skip Low/Medium
     const minSize=Math.max(4,Math.round(0.006*IMGD*IMGD));
     for(let i=0;i<cells.length;i++){
       status.textContent="Optimizing (SIMP polish) "+(i+1)+"/"+cells.length+"…";
