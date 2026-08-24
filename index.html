@@ -474,6 +474,7 @@ function stiffnessGrad(dens,m,opts){
     return x;});
   const auxetic=opts.objective==='auxetic', beta=opts.beta!=null?opts.beta:0.8;
   const V=nel;const E00=new Float64Array(nel),E11=new Float64Array(nel),E01=new Float64Array(nel);
+  let C11=0,C01=0;
   for(let e=0;e<nel;e++){const o=e*8;
     const d=[[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0]];
     for(let c=0;c<3;c++)for(let k=0;k<8;k++) d[c][k]=CHI0[k][c]-chi[c][edof[o+k]];
@@ -481,6 +482,7 @@ function stiffnessGrad(dens,m,opts){
       for(let a=0;a<8;a++){let s=0;const ra=KE[a];for(let k=0;k<8;k++)s+=ra[k]*di[k];dik[a]=s;}
       let s=0;for(let k=0;k<8;k++)s+=dik[k]*d[j][k];return s;};
     E00[e]=en(0,0);E11[e]=en(1,1);E01[e]=en(0,1);
+    C11+=scale[e]*E11[e]/V; C01+=scale[e]*E01[e]/V;
   }
   // ASCENT gradient (guidance nudges x0 up it). auxetic: -d/ds[C01-beta*(C00+C11)]
   // so ascending lowers the coupling; else: dK/ds (stiffer).
@@ -489,7 +491,7 @@ function stiffnessGrad(dens,m,opts){
     if(auxetic) g[e]= -dscale[e]*(E01[e]-beta*(E00[e]+E11[e]))/V;
     else g[e]=dscale[e]*(E00[e]+E11[e]+2*E01[e])/4/V;
   }
-  return g;
+  return {g, nu:C01/(C11+1e-12)};   // nu lets guidance aim at a target, not just deepen
 }
 // ===================== diffusion schedule =====================
 const T_STEPS=400, IMGD=32, M=24;
@@ -576,7 +578,11 @@ async function sampleBatch(which,n,condVec,guidance,steps,onProg,guide){
       for(let i=0;i<n;i++){
         const off=i*px, dens=new Float64Array(px);
         for(let k=0;k<px;k++) dens[k]=(x0A[off+k]+1)*0.5;
-        const g=stiffnessGrad(dens,IMGD,{cg:60,objective:guide.objective,beta:guide.beta});
+        const {g,nu}=stiffnessGrad(dens,IMGD,{cg:60,objective:guide.objective,beta:guide.beta});
+        // target-aware: once an auxetic cell has reached the requested ν, stop
+        // pushing it — avoids overshoot (accuracy) and lets cells settle at
+        // different depths (diversity)
+        if(guide.objective==="auxetic" && guide.target!=null && nu<=guide.target) continue;
         let mean=0; for(let k=0;k<px;k++) mean+=g[k]; mean/=px;
         let mx=1e-12; for(let k=0;k<px;k++){const a2=Math.abs(g[k]-mean); if(a2>mx)mx=a2;}
         const lr=guide.strength;
@@ -678,7 +684,9 @@ go.onclick=async()=>{
   }
   go.disabled=true; results.innerHTML="";
   const targetVF=+vf.value, targetNu=nuTarget();
-  const guidance=+guid.value, nSteps=+steps.value, n=isAux?16:8;
+  // auxetic ν is hard for the model to hit, so draw a larger pool and pick the
+  // best + most diverse (best-of-N accuracy, MMR diversity below)
+  const guidance=+guid.value, nSteps=+steps.value, n=isAux?24:8;
   const stiffName=["low","medium","high"][STIFF];
   // request mapping: standard model uses the measured vf calibration map; the
   // aux specialist's nu response lives in the tail, so ask deeper than target
@@ -696,7 +704,7 @@ go.onclick=async()=>{
   // toward stiffer cells (std) or lower Poisson (auxetic).
   const guide=GUIDE
     ? {K:Math.min(12,Math.max(4,Math.round(nSteps*0.3))), strength:0.25,
-       objective:isAux?"auxetic":"bulk", beta:0.5} : null;
+       objective:isAux?"auxetic":"bulk", beta:0.5, target:isAux?targetNu:null} : null;
   status.textContent="Sampling "+n+" cells (target vf "+targetVF.toFixed(2)+
     (isAux?", target ν "+targetNu.toFixed(2)+", auxetic model":", stiffness "+stiffName)+
     (guide?", physics-guided":"")+")…";
@@ -737,17 +745,39 @@ go.onclick=async()=>{
   }
   status.textContent="Evaluating with in-browser homogenization…";
   const scored=cells.map(a=>({a,m:evaluateCell(a)}));
-  scored.sort((p,q)=>{
-    // reward connected, few-piece (solid) cells; penalise fragmentation
-    const sc=m=>(m.connected?1.5:0) - 0.15*Math.max(0,m.comps-1) - Math.abs(m.vf-targetVF) +
-      (isAux? -Math.abs(m.nu-targetNu)*2.0 : (STIFF===2?m.E:STIFF===0?-m.E:0)*0.5);
-    return sc(q.m)-sc(p.m);
-  });
+  // accuracy score: connected, on-vf, and (auxetic) close to the target ν
+  const sc=m=>(m.connected?1.5:0) - 0.15*Math.max(0,m.comps-1) - Math.abs(m.vf-targetVF) +
+    (isAux? -Math.abs(m.nu-targetNu)*2.5 : (STIFF===2?m.E:STIFF===0?-m.E:0)*0.5);
+  scored.forEach(s=>s.score=sc(s.m));
+  const iou=(a,b)=>{let inter=0,uni=0;for(let i=0;i<a.length;i++){inter+=a[i]&b[i];uni+=a[i]|b[i];}return uni?inter/uni:1;};
+  if(isAux){
+    // diversity-aware ordering (max-marginal-relevance): the best match first,
+    // then repeatedly the candidate that scores well AND differs most (low IoU)
+    // from those already shown -> accurate best cell + a varied auxetic set
+    const lambda=0.6, chosen=[], pool=scored.slice();
+    while(pool.length){
+      let bi=0,bv=-Infinity;
+      for(let i=0;i<pool.length;i++){
+        let sim=0; for(const c of chosen){const v=iou(pool[i].a,c.a); if(v>sim)sim=v;}
+        const mmr=pool[i].score-lambda*sim;
+        if(mmr>bv){bv=mmr;bi=i;}
+      }
+      chosen.push(pool.splice(bi,1)[0]);
+    }
+    scored.length=0; scored.push(...chosen);
+  }else{
+    scored.sort((p,q)=>q.score-p.score);
+  }
   let done="Done. "+scored.filter(s=>s.m.connected).length+"/"+n+" connected.";
   if(isAux){
     const minNu=Math.min(...scored.map(s=>s.m.nu));
     const nAux=scored.filter(s=>s.m.nu<-0.01).length;
-    done+=" Lowest measured ν "+minNu.toFixed(3)+", "+nAux+"/"+n+" auxetic; ranked by measured ν vs target "+targetNu.toFixed(2)+".";
+    const bestDnu=Math.abs(scored[0].m.nu-targetNu);
+    const top=scored.slice(0,Math.min(8,scored.length));   // shown-set diversity
+    let sum=0,cnt=0;for(let i=0;i<top.length;i++)for(let j=i+1;j<top.length;j++){sum+=iou(top[i].a,top[j].a);cnt++;}
+    const div=cnt?1-sum/cnt:0;
+    done+=" Best ν "+scored[0].m.nu.toFixed(3)+" (target "+targetNu.toFixed(2)+", |Δ| "+
+      bestDnu.toFixed(3)+"); lowest "+minNu.toFixed(3)+", "+nAux+"/"+n+" auxetic; top-8 diversity "+div.toFixed(2)+".";
   }
   status.textContent=done;
   const grid=document.createElement("div");
