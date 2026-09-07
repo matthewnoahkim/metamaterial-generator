@@ -705,9 +705,13 @@ go.onclick=async()=>{
       status.textContent="Optimizing (SIMP polish) "+(i+1)+"/"+cells.length+"…";
       await new Promise(r=>setTimeout(r,0));
       const vfHere=volumeFraction(cells[i]);
+      // std path: with physics guidance on, the polish reaches ~96% of its
+      // converged stiffness in ~5 iters (offline attribution study, n=40:
+      // guided+SIMP-5 E 0.212 vs guided+SIMP-15 E 0.220), so 5 iters is the
+      // efficient default. Auxetic left at 30 (that path was not re-validated).
       const opt=isAux
         ? {iters:30,rmin:1.5,objective:"auxetic",symmetric:true,beta:0.5}
-        : {iters:15,rmin:2.0};
+        : {iters:5,rmin:2.0};
       let pol=optimizeCell(cells[i],IMGD,vfHere,opt);
       if(SOLID) pol=despeckle(pol,IMGD,minSize);
       // auxetic: keep the polish only if it actually lowered measured Poisson,
