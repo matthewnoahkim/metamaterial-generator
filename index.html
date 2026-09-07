@@ -705,9 +705,19 @@ go.onclick=async()=>{
       status.textContent="Optimizing (SIMP polish) "+(i+1)+"/"+cells.length+"…";
       await new Promise(r=>setTimeout(r,0));
       const vfHere=volumeFraction(cells[i]);
+      // Iteration counts and the auxetic beta are set from an offline attribution
+      // study (n=16-40, frozen model, same homogenizer as here):
+      //  - std path: with guidance on, the polish reaches ~96% of its converged
+      //    stiffness in ~5 iters (guided+SIMP-5 E 0.212 vs guided+SIMP-15 E 0.220).
+      //  - auxetic path: beta=0.5 was COUNTERPRODUCTIVE — its stiffness penalty
+      //    drove nu POSITIVE (median +0.11), so the keep-if-better rule discarded
+      //    every polish and the 30 iters were wasted. beta=0 instead deepens nu
+      //    from ~-0.10 (raw) to ~-0.54 by 5 iters (converges ~-0.60), while E and
+      //    connectivity also improve; 95% of the depth lands by ~6 iters. Raise
+      //    beta (e.g. 0.2) to trade nu-depth for stiffness.
       const opt=isAux
-        ? {iters:30,rmin:1.5,objective:"auxetic",symmetric:true,beta:0.5}
-        : {iters:15,rmin:2.0};
+        ? {iters:6,rmin:1.5,objective:"auxetic",symmetric:true,beta:0.0}
+        : {iters:5,rmin:2.0};
       let pol=optimizeCell(cells[i],IMGD,vfHere,opt);
       if(SOLID) pol=despeckle(pol,IMGD,minSize);
       // auxetic: keep the polish only if it actually lowered measured Poisson,
